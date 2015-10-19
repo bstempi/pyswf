@@ -38,36 +38,39 @@ class ActivityWorker:
         :param aws_secret_access_key: Secret key to use for S3 and SWF.  If none is supplied, boto will fallback to looking for credentials elsewhere.
         :return:
         """
-        self._swf = boto.connect_swf(aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key)
 
-        # Give preference to the values in the constructor
-        self._swf_domain = swf_domain
-        self._swf_task_list = swf_task_list
-        self._activity_type = activity_type
-        self._activity_version = activity_version
+        if SwfDecisionContext.mode == SwfDecisionContext.Distributed:
+            self._swf = boto.connect_swf(aws_access_key_id=aws_access_key_id,
+                                         aws_secret_access_key=aws_secret_access_key)
 
-        if not hasattr(self, 'Meta'):
-            raise Exception('Every activity worker class must have an inner Meta class to provide configurations')
+            # Give preference to the values in the constructor
+            self._swf_domain = swf_domain
+            self._swf_task_list = swf_task_list
+            self._activity_type = activity_type
+            self._activity_version = activity_version
 
-        # Default to values in the Meta class
-        if self._swf_domain is None:
-            self._swf_domain = getattr(self.Meta, 'swf_domain')
-        if self._swf_task_list is None:
-            self._swf_task_list = getattr(self.Meta, 'swf_task_list')
-        if self._activity_type is None:
-            self._activity_type = getattr(self.Meta, 'activity_type')
-        if self._activity_version is None:
-            self._activity_version = getattr(self.Meta, 'activity_version')
+            if not hasattr(self, 'Meta'):
+                raise Exception('Every activity worker class must have an inner Meta class to provide configurations')
 
-        # Make sure these values got set somehow
-        if self._swf_domain is None:
-            raise Exception('swf_domain must be set in either the constructor or the Meta class.')
-        if self._swf_task_list is None:
-            raise Exception('swf_task_list must be set in either the constructor or the Meta class.')
-        if self._activity_type is None:
-            raise Exception('activity_version must be set in either the constructor or the Meta class.')
-        if self._activity_version is None:
-            raise Exception('activity_version must be set in either the constructor or the Meta class.')
+            # Default to values in the Meta class
+            if self._swf_domain is None:
+                self._swf_domain = getattr(self.Meta, 'swf_domain')
+            if self._swf_task_list is None:
+                self._swf_task_list = getattr(self.Meta, 'swf_task_list')
+            if self._activity_type is None:
+                self._activity_type = getattr(self.Meta, 'activity_type')
+            if self._activity_version is None:
+                self._activity_version = getattr(self.Meta, 'activity_version')
+
+            # Make sure these values got set somehow
+            if self._swf_domain is None:
+                raise Exception('swf_domain must be set in either the constructor or the Meta class.')
+            if self._swf_task_list is None:
+                raise Exception('swf_task_list must be set in either the constructor or the Meta class.')
+            if self._activity_type is None:
+                raise Exception('activity_version must be set in either the constructor or the Meta class.')
+            if self._activity_version is None:
+                raise Exception('activity_version must be set in either the constructor or the Meta class.')
 
     @abstractmethod
     def handle_task(self, **kwargs):
