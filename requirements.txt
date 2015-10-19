@@ -1,0 +1,6 @@
+boto
+cement
+protobuf
+nose
+pytz
+python-dateutil
