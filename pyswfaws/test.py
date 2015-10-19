@@ -134,6 +134,7 @@ class CoreSerialTest(unittest.TestCase):
         self.assertEqual(final_result, 40)
 
 
+@attr('integration')
 class CoreDistributedTest(unittest.TestCase):
     """
     Test to make sure that the core parts of distributed exeuction work
