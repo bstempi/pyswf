@@ -1,4 +1,3 @@
-from logging import Logger
 from dateutil import relativedelta
 
 from models import SwfDecisionContext
@@ -9,6 +8,7 @@ import thread
 import datetime
 import pytz
 import time
+import logging
 
 
 class Promise(object):
@@ -29,7 +29,7 @@ class DistributedPromise(Promise):
     result that it does not yet have.
     """
 
-    _logger = Logger('pyswfaws.DistributedPromise')
+    _logger = logging.getLogger('pyswfaws.DistributedPromise')
     _activity = None
     _attempts = 1
     _failure_states = ('FAILED_TO_SCHEDULE', 'FAILED', 'TIMED_OUT', 'CANCELED')
@@ -65,6 +65,7 @@ class DistributedPromise(Promise):
             raise ActivityTaskException(task_name=self._activity.type, task_version=self._activity.version,
                                         task_id=self._activity.id, failure_reason=self._activity.failure_reason,
                                         failure_status=self._activity.state)
+            thread.exit()
         else:
             # We finished
             return self._result

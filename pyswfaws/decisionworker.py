@@ -5,6 +5,7 @@ import sys
 import uuid
 
 from abc import ABCMeta
+from abc import abstractmethod
 from collections import OrderedDict
 
 import boto
@@ -30,6 +31,7 @@ class DecisionWorker:
         """
         pass
 
+    @abstractmethod
     def __init__(self, mode, swf_domain=None, swf_task_list=None, aws_access_key_id=None, aws_secret_access_key=None):
         """
         Inits a decision worker ready for running
@@ -40,6 +42,8 @@ class DecisionWorker:
         :param aws_secret_access_key: Secret key to use for S3 and SWF.  If none is supplied, boto will fallback to looking for credentials elsewhere.
         :return:
         """
+
+        SwfDecisionContext.mode = mode
 
         # Make sure there's a Meta class
         if not hasattr(self, 'Meta'):
@@ -52,26 +56,25 @@ class DecisionWorker:
             self.logger.debug('Starting SWF client')
 
             self._swf = boto.connect_swf(aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key)
-
-            # Give preference to the values in the constructor
-            self._swf_domain = swf_domain
-            self._swf_task_list = swf_task_list
-
-            # Default to values in the Meta class
-            if self._swf_domain is None:
-                self._swf_domain = getattr(self.Meta, 'swf_domain')
-            if self._swf_task_list is None:
-                self._swf_task_list = getattr(self.Meta, 'swf_task_list')
-
-            # Make sure these values got set somehow
-            if self._swf_domain is None:
-                raise Exception('swf_domain must be set in either the constructor or the Meta class when running in '
-                                'distributed mode.')
-            if self._swf_task_list is None:
-                raise Exception('swf_task_list must be set in either the constructor or the Meta class when running '
-                                'in distributed mode.')
         else:
             raise Exception('Mode {} is not valid'.format(mode))
+        # Give preference to the values in the constructor
+        self._swf_domain = swf_domain
+        self._swf_task_list = swf_task_list
+
+        # Default to values in the Meta class
+        if self._swf_domain is None:
+            self._swf_domain = getattr(self.Meta, 'swf_domain')
+        if self._swf_task_list is None:
+            self._swf_task_list = getattr(self.Meta, 'swf_task_list')
+
+        # Make sure these values got set somehow
+        if self._swf_domain is None:
+            raise Exception('swf_domain must be set in either the constructor or the Meta class when running in '
+                            'distributed mode.')
+        if self._swf_task_list is None:
+            raise Exception('swf_task_list must be set in either the constructor or the Meta class when running '
+                            'in distributed mode.')
 
     def handle_no_op(self, decision_task):
         """
@@ -119,7 +122,7 @@ class DecisionWorker:
 
         self.logger.debug('Unpacking a message')
         if workflow.input is None or workflow.input == '':
-            return dict()
+            return
         serialized_message = self.Meta.data_store.get(workflow.input)
         self.logger.debug('Message was unpacked and deserialized')
         return self.Meta.serializer.deserialize(serialized_message)
@@ -150,17 +153,17 @@ class DecisionWorker:
         """
 
         while True:
+            SwfDecisionContext.mode = SwfDecisionContext.Distributed
+            self.logger.debug('Polling')
+            decision_task = self._swf.poll_for_decision_task(domain=self._swf_domain, task_list=self._swf_task_list)
+
+            # No-op if we got no events
+            if 'events' not in decision_task:
+                self.logger.debug('Calling the no-op handler')
+                self.handle_no_op(decision_task)
+                continue
+
             try:
-                SwfDecisionContext.mode = SwfDecisionContext.Distributed
-                self.logger.debug('Polling')
-                decision_task = self._swf.poll_for_decision_task(domain=self._swf_domain, task_list=self._swf_task_list)
-
-                # No-op if we got no events
-                if 'events' not in decision_task:
-                    self.logger.debug('Calling the no-op handler')
-                    self.handle_no_op(decision_task)
-                    continue
-
                 self.logger.debug('Received an decision task')
 
                 # Get full event history
@@ -184,7 +187,10 @@ class DecisionWorker:
                 args = self._unpack_message(SwfDecisionContext.workflow)
 
                 try:
-                    result = self.handle(**args)
+                    if args is None:
+                        result = self.handle()
+                    else:
+                        result = self.handle(*args[0], **args[1])
                     SwfDecisionContext.finished = True
                     SwfDecisionContext.output = result
                 except SystemExit:
@@ -320,6 +326,8 @@ class DecisionWorker:
                 activity_task.version = e['activityTaskScheduledEventAttributes']['activityType']['version']
                 activity_task.control = e['activityTaskScheduledEventAttributes'].get('control')
                 activity_task.input = e['activityTaskScheduledEventAttributes'].get('input')
+                activity_task.task_list = e['activityTaskScheduledEventAttributes']['taskList'].get('name')
+                activity_task.task_priority = e['activityTaskScheduledEventAttributes'].get('taskPriority')
                 activity_task.state = 'SCHEDULED'
                 activities[activity_task.id] = activity_task
             elif et == 'ScheduleActivityTaskFailed':

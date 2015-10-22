@@ -22,6 +22,9 @@ class TestDecider(DecisionWorker):
         serializer = serializers.JsonSerializer()
         data_store = datastores.SwfDataStore()
 
+    def __init__(self, mode):
+        super(TestDecider, self).__init__(mode=mode)
+
     def handle(self, **kwargs):
         worker_a = TestActivityWorkerA()
         worker_b = TestActivityWorkerB()
@@ -40,6 +43,9 @@ class TestDeciderWithCachedResult(DecisionWorker):
         swf_task_list = 'some_list'
         serializer = serializers.JsonSerializer()
         data_store = datastores.SwfDataStore()
+
+    def __init__(self, mode):
+        super(TestDeciderWithCachedResult, self).__init__(mode=mode)
 
     def handle(self, **kwargs):
         worker_a = TestActivityWorkerA()
@@ -71,6 +77,9 @@ class TestActivityWorkerA(ActivityWorker):
         serializer = serializers.JsonSerializer()
         data_store = datastores.SwfDataStore()
 
+    def __init__(self):
+        super(TestActivityWorkerA, self).__init__()
+
     @ActivityWorker.activity_task
     def handle_task(self, a):
         return a * a
@@ -87,6 +96,9 @@ class TestActivityWorkerB(ActivityWorker):
         activity_version = '1.0'
         serializer = serializers.JsonSerializer()
         data_store = datastores.SwfDataStore()
+
+    def __init__(self):
+        super(TestActivityWorkerB, self).__init__()
 
     @ActivityWorker.activity_task
     def handle_task(self, b):
@@ -132,44 +144,6 @@ class CoreSerialTest(unittest.TestCase):
         test_decider = TestDeciderWithCachedResult(SwfDecisionContext.SerialLocal)
         final_result = test_decider.handle()
         self.assertEqual(final_result, 40)
-
-
-@attr('integration')
-class CoreDistributedTest(unittest.TestCase):
-    """
-    Test to make sure that the core parts of distributed exeuction work
-    """
-    def test_core_distributed_first_run_happy_path(self):
-        SwfDecisionContext.mode = SwfDecisionContext.Distributed
-        test_decider = TestDecider(SwfDecisionContext.SerialLocal)
-        try:
-            test_decider.handle()
-        except SystemExit:
-            pass
-
-        self.assertEqual(2, len(SwfDecisionContext.decisions._data))
-        first_decision = SwfDecisionContext.decisions._data[0]
-        second_decision = SwfDecisionContext.decisions._data[1]
-
-        self.assertEqual(str(1), first_decision[
-            'scheduleActivityTaskDecisionAttributes']['activityId'])
-        self.assertEqual(TestActivityWorkerA.Meta.swf_task_list, first_decision[
-            'scheduleActivityTaskDecisionAttributes']['taskList']['name'])
-        self.assertEqual(TestActivityWorkerA.Meta.activity_type, first_decision[
-            'scheduleActivityTaskDecisionAttributes']['activityType']['name'])
-        self.assertEqual(TestActivityWorkerA.Meta.activity_version, first_decision[
-            'scheduleActivityTaskDecisionAttributes']['activityType']['version'])
-        self.assertEqual('[[6], {}]', first_decision['scheduleActivityTaskDecisionAttributes']['input'])
-
-        self.assertEqual(str(2), second_decision[
-            'scheduleActivityTaskDecisionAttributes']['activityId'])
-        self.assertEqual(TestActivityWorkerB.Meta.swf_task_list, second_decision[
-            'scheduleActivityTaskDecisionAttributes']['taskList']['name'])
-        self.assertEqual(TestActivityWorkerB.Meta.activity_type, second_decision[
-            'scheduleActivityTaskDecisionAttributes']['activityType']['name'])
-        self.assertEqual(TestActivityWorkerB.Meta.activity_version, second_decision[
-            'scheduleActivityTaskDecisionAttributes']['activityType']['version'])
-        self.assertEqual('[[6], {}]', second_decision['scheduleActivityTaskDecisionAttributes']['input'])
 
 
 @attr('integration')

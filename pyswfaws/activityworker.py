@@ -28,6 +28,7 @@ class ActivityWorker:
         """
         pass
 
+    @abstractmethod
     def __init__(self, swf_domain=None, swf_task_list=None, activity_type=None,
                  activity_version=None, aws_access_key_id=None, aws_secret_access_key=None):
         """
@@ -43,34 +44,34 @@ class ActivityWorker:
             self._swf = boto.connect_swf(aws_access_key_id=aws_access_key_id,
                                          aws_secret_access_key=aws_secret_access_key)
 
-            # Give preference to the values in the constructor
-            self._swf_domain = swf_domain
-            self._swf_task_list = swf_task_list
-            self._activity_type = activity_type
-            self._activity_version = activity_version
+        # Give preference to the values in the constructor
+        self._swf_domain = swf_domain
+        self._swf_task_list = swf_task_list
+        self._activity_type = activity_type
+        self._activity_version = activity_version
 
-            if not hasattr(self, 'Meta'):
-                raise Exception('Every activity worker class must have an inner Meta class to provide configurations')
+        if not hasattr(self, 'Meta'):
+            raise Exception('Every activity worker class must have an inner Meta class to provide configurations')
 
-            # Default to values in the Meta class
-            if self._swf_domain is None:
-                self._swf_domain = getattr(self.Meta, 'swf_domain')
-            if self._swf_task_list is None:
-                self._swf_task_list = getattr(self.Meta, 'swf_task_list')
-            if self._activity_type is None:
-                self._activity_type = getattr(self.Meta, 'activity_type')
-            if self._activity_version is None:
-                self._activity_version = getattr(self.Meta, 'activity_version')
+        # Default to values in the Meta class
+        if self._swf_domain is None:
+            self._swf_domain = getattr(self.Meta, 'swf_domain')
+        if self._swf_task_list is None:
+            self._swf_task_list = getattr(self.Meta, 'swf_task_list')
+        if self._activity_type is None:
+            self._activity_type = getattr(self.Meta, 'activity_type')
+        if self._activity_version is None:
+            self._activity_version = getattr(self.Meta, 'activity_version')
 
-            # Make sure these values got set somehow
-            if self._swf_domain is None:
-                raise Exception('swf_domain must be set in either the constructor or the Meta class.')
-            if self._swf_task_list is None:
-                raise Exception('swf_task_list must be set in either the constructor or the Meta class.')
-            if self._activity_type is None:
-                raise Exception('activity_version must be set in either the constructor or the Meta class.')
-            if self._activity_version is None:
-                raise Exception('activity_version must be set in either the constructor or the Meta class.')
+        # Make sure these values got set somehow
+        if self._swf_domain is None:
+            raise Exception('swf_domain must be set in either the constructor or the Meta class.')
+        if self._swf_task_list is None:
+            raise Exception('swf_task_list must be set in either the constructor or the Meta class.')
+        if self._activity_type is None:
+            raise Exception('activity_version must be set in either the constructor or the Meta class.')
+        if self._activity_version is None:
+            raise Exception('activity_version must be set in either the constructor or the Meta class.')
 
     @abstractmethod
     def handle_task(self, **kwargs):
@@ -108,8 +109,12 @@ class ActivityWorker:
         :return: True if we want to exit, False otherwise
         """
         self.logger.exception('Exception caught while running the event loop.')
-        self._swf.respond_activity_task_failed(task_token=activity_task['taskToken'],
-                                               reason='Activity exception', details=exception.message[:30000])
+
+        try:
+            self._swf.respond_activity_task_failed(task_token=activity_task['taskToken'],
+                                                   reason='Activity exception', details=str(exception)[:3000])
+        except Exception as e:
+            self.logger.exception('Exception while responding to SWF')
         return False
 
     def start(self):
@@ -117,17 +122,18 @@ class ActivityWorker:
         Starts the event loop.  This method blocks and runs infinitely.
         :return:
         """
+        SwfDecisionContext.mode = SwfDecisionContext.SerialLocal
         while True:
+            self.logger.debug('Polling')
+            activity_task = self._swf.poll_for_activity_task(domain=self._swf_domain, task_list=self._swf_task_list)
+
+            # No-op if we got no events
+            if 'activityId' not in activity_task:
+                self.logger.debug('Calling the no-op handler')
+                self.handle_no_op(activity_task)
+                continue
+
             try:
-                self.logger.debug('Polling')
-                activity_task = self._swf.poll_for_activity_task(domain=self._swf_domain, task_list=self._swf_task_list)
-
-                # No-op if we got no events
-                if 'activityId' not in activity_task:
-                    self.logger.debug('Calling the no-op handler')
-                    self.handle_no_op(activity_task)
-                    continue
-
                 if 'input' in activity_task and activity_task['input'] != '':
                     parsed_message = self._unpack_input(activity_task)
                 else:
@@ -138,10 +144,14 @@ class ActivityWorker:
 
                 # In this case, result will be a promise.  Be sure to treat it as such.
                 if parsed_message is None:
-                    parsed_message = list(list(), dict())
-                result = self.handle_task(*parsed_message[0], **parsed_message[1])
+                    result = self.handle_task()
+                else:
+                    result = self.handle_task(*parsed_message[0], **parsed_message[1])
 
-                swf_result = self._pack_result(activity_task, result.result)
+                if result.result:
+                    swf_result = self._pack_result(activity_task, result.result)
+                else:
+                    swf_result = None
                 self._swf.respond_activity_task_completed(activity_task['taskToken'], swf_result)
 
             except Exception as e:
