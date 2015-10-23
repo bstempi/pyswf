@@ -12,7 +12,8 @@ import boto
 
 from boto.swf.layer1_decisions import Layer1Decisions
 from models import *
-from serializers import JsonSerializer
+from serializers import *
+from datastores import *
 
 
 class DecisionWorker:
@@ -29,7 +30,10 @@ class DecisionWorker:
         All instances of a DecisionWorker will need a Meta class in order to define certain behavior.  This is modeled
         after some of the classes in Django.
         """
-        pass
+        input_serializer = JsonSerializer()
+        input_data_store = SwfDataStore()
+        result_serializer = JsonSerializer()
+        result_data_store = SwfDataStore()
 
     @abstractmethod
     def __init__(self, mode, swf_domain=None, swf_task_list=None, aws_access_key_id=None, aws_secret_access_key=None):
@@ -111,38 +115,6 @@ class DecisionWorker:
         """
         raise NotImplementedError('Handler method must exist')
 
-    def _unpack_message(self, workflow):
-        """
-        Unpacks the message using the DataStore/Serializer declared in the Meta class.
-
-        Override if the DataStore/Serializer paradigm doesn't work for you.
-        :return: A serialized message if there is a data store but no serializer, a deserialized message if both exist,
-        and None if there is no data store.
-        """
-
-        self.logger.debug('Unpacking a message')
-        if workflow.input is None or workflow.input == '':
-            return
-        serialized_message = self.Meta.data_store.get(workflow.input)
-        self.logger.debug('Message was unpacked and deserialized')
-        return self.Meta.serializer.deserialize(serialized_message)
-
-    def _pack_result(self, workflow, result):
-        """
-        Packs the result using the DataStore/Serlializer declared in the Meta class.
-
-        Override if the DataStore/Serializer paradigm doesn't work for you.
-        :param workflow:
-        :param result: an unserialized result message
-        :return: a result suitable for the result field of an ActivityTaskCompletedEvent
-        """
-
-        serialized_message = self.Meta.serializer.serialize(result)
-        return self.Meta.data_store.put(serialized_message, '{}-result'.format(workflow.run_id))
-
-        self.logger.debug('Message was unpacked and deserialized')
-        return Meta.serializer.deserialize(serialized_message)
-
     def start(self):
         """
         Starts the event loop
@@ -155,15 +127,16 @@ class DecisionWorker:
         while True:
             SwfDecisionContext.mode = SwfDecisionContext.Distributed
             self.logger.debug('Polling')
-            decision_task = self._swf.poll_for_decision_task(domain=self._swf_domain, task_list=self._swf_task_list)
-
-            # No-op if we got no events
-            if 'events' not in decision_task:
-                self.logger.debug('Calling the no-op handler')
-                self.handle_no_op(decision_task)
-                continue
 
             try:
+                decision_task = self._swf.poll_for_decision_task(domain=self._swf_domain, task_list=self._swf_task_list)
+
+                # No-op if we got no events
+                if 'events' not in decision_task:
+                    self.logger.debug('Calling the no-op handler')
+                    self.handle_no_op(decision_task)
+                    continue
+
                 self.logger.debug('Received an decision task')
 
                 # Get full event history
@@ -179,45 +152,60 @@ class DecisionWorker:
 
                     decision_task['events'] = list()
                     next_page_token = additional_history.get('nextPageToken')
+            except Exception:
+                self.logger.exception('Exception while polling for a task and/or history')
+                return
 
-                # Populate the context and make sure its' in teh right mode
+            # Populate the context and make sure its' in teh right mode
+            try:
                 self._populate_decision_context(decision_task, history)
-
-                # get the args and run the handle function in a thread
-                args = self._unpack_message(SwfDecisionContext.workflow)
-
-                try:
-                    if args is None:
-                        result = self.handle()
-                    else:
-                        result = self.handle(*args[0], **args[1])
-                    SwfDecisionContext.finished = True
-                    SwfDecisionContext.output = result
-                except SystemExit:
-                    SwfDecisionContext.finished = False
-
-                # Is our workflow finished?
-                if SwfDecisionContext.finished is True:
-                    if result:
-                        # We have output to attach
-                        result = self._pack_result(SwfDecisionContext.workflow, result)
-                    SwfDecisionContext.decisions.complete_workflow_execution(result=result)
             except Exception as e:
-                if SwfDecisionContext.mode == SwfDecisionContext.Distributed:
-                    self.logger.debug('Calling the exception handler')
-                    should_exit = self.handle_exception(e)
-                    if should_exit:
-                        self.logger.debug('Exiting due to return value from handle_exception()')
-                        return
-                else:
-                    raise e
-            finally:
-                self.logger.debug('Returning decisions to SWF.')
-                try:
-                    self._swf.respond_decision_task_completed(decision_task['taskToken'],
+                self.logger.exception('Exception while parsing a workflow history')
+                message = str(e)
+                if message:
+                    message = message[:3000]
+                SwfDecisionContext.decisions.fail_workflow_execution(reason='Failed to parse workflow history',
+                                                                     details=message)
+                self._swf.respond_decision_task_completed(decision_task['taskToken'],
                                                               SwfDecisionContext.decisions._data)
-                except Exception:
-                    self.logger.exception('Error when responding with decision tasks')
+                return
+
+            # get the args and run the handle function in a thread
+            args = (list(), dict())
+            if SwfDecisionContext.workflow.input:
+                self.logger.debug('Unpacking input arguments')
+                serialized_args = self.Meta.input_data_store.get(SwfDecisionContext.workflow.input)
+                args = self.Meta.input_serializer.deserialize_input(serialized_args)
+
+            try:
+                result = self.handle(*args[0], **args[1])
+                SwfDecisionContext.finished = True
+                SwfDecisionContext.output = result
+            except SystemExit:
+                SwfDecisionContext.finished = False
+            except Exception as e:
+                self.logger.debug('Calling the exception handler')
+                should_exit = self.handle_exception(e)
+                if should_exit:
+                    self.logger.debug('Exiting due to return value from handle_exception()')
+                    return
+
+            # Is our workflow finished?
+            if SwfDecisionContext.finished is True:
+                swf_result = None
+                if result:
+                    self.logger.debug('Packing workflow results')
+                    serialized_result = self.Meta.result_serializer.serialize_result(result)
+                    key = '{}-result'.format(SwfDecisionContext.workflow.run_id)
+                    swf_result = self.Meta.result_data_store.put(serialized_result, key)
+                SwfDecisionContext.decisions.complete_workflow_execution(result=swf_result)
+
+            self.logger.debug('Returning decisions to SWF.')
+            try:
+                self._swf.respond_decision_task_completed(decision_task['taskToken'],
+                                                          SwfDecisionContext.decisions._data)
+            except Exception:
+                self.logger.exception('Error when responding with decision tasks')
 
     @staticmethod
     def nondeterministic(f):
@@ -237,6 +225,8 @@ class DecisionWorker:
 
         This is useful for saving the results of an expensive or nondeterministic operation.  Using cached values may
         help speed-up replay.
+
+        Currently, this defaults to using the result serializer and data store.
         :param f:
         :return:
         """
@@ -245,11 +235,20 @@ class DecisionWorker:
             if SwfDecisionContext.mode == SwfDecisionContext.Distributed:
                 try:
                     cached_result = SwfDecisionContext.cache_markers_iter.next()
-                    return self.Meta.serializer.deserialize(cached_result.details)
+                    result = None
+                    if cached_result.details:
+                        serialized_result = self.Meta.result_data_store.get(cached_result.details)
+                        result = self.Meta.result_serializer.deserialize_result(serialized_result)
+                    return result
                 except StopIteration:
                     # If we're here, then this guy hasn't been called before.  Call it and cache the output.
                     result = f(self, *args, **kwargs)
-                    marker_details = self.Meta.data_store.put(self.Meta.serializer.serialize(result), str(uuid.uuid4()))
+                    details = None
+                    if result:
+                        serialized_result = self.Meta.result_serializer.serialize_result(result)
+                        key = '{}-{}'.format(SwfDecisionContext.workflow.run_id, str(uuid.uuid4()))
+                        result = self.Meta.result_data_store.put(serialized_result, key)
+                    marker_details = self.Meta.data_store.put(details, str(uuid.uuid4()))
                     SwfDecisionContext.decisions.record_marker('cache', marker_details)
                     return result
             else:
