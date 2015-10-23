@@ -6,6 +6,8 @@ import uuid
 from boto.swf.layer1_decisions import Layer1Decisions
 from models import SwfDecisionContext, Activity
 from promise import *
+from serializers import *
+from datastores import *
 
 import boto
 
@@ -26,7 +28,10 @@ class ActivityWorker:
         All instances of an ActivityWorker will need a Meta class in order to define certain behavior.  This is modeled
         after Django.
         """
-        pass
+        input_serializer = JsonSerializer()
+        input_data_store = SwfDataStore()
+        result_serializer = JsonSerializer()
+        result_data_store = SwfDataStore()
 
     @abstractmethod
     def __init__(self, swf_domain=None, swf_task_list=None, activity_type=None,
@@ -134,24 +139,26 @@ class ActivityWorker:
                 continue
 
             try:
+                input = (list(), dict())
                 if 'input' in activity_task and activity_task['input'] != '':
-                    parsed_message = self._unpack_input(activity_task)
-                else:
-                    parsed_message = None
+                    self.logger.debug('Unpacking input message')
+                    serialized_input = self.Meta.input_data_store.get(activity_task['input'])
+                    input = self.Meta.input_serializer.deserialize_input(serialized_input)
 
                 # Let the user handle it
                 self.logger.debug("Calling the user's handler")
 
                 # In this case, result will be a promise.  Be sure to treat it as such.
-                if parsed_message is None:
-                    result = self.handle_task()
-                else:
-                    result = self.handle_task(*parsed_message[0], **parsed_message[1])
+                result = self.handle_task(*input[0], **input[1])
 
+                swf_result = None
                 if result.result:
-                    swf_result = self._pack_result(activity_task, result.result)
-                else:
-                    swf_result = None
+                    self.logger.debug('Serializing activity result')
+                    serialized_result = self.Meta.result_serializer.serialize_result(result.result)
+                    key = '{}-{}'.format(activity_task['workflowExecution']['runId'], activity_task['activityId'])
+                    swf_result = self.Meta.result_data_store.put(serialized_result, key)
+
+                self.logger.debug('Marking activity as completed')
                 self._swf.respond_activity_task_completed(activity_task['taskToken'], swf_result)
 
             except Exception as e:
@@ -160,70 +167,6 @@ class ActivityWorker:
                 if should_exit:
                     self.logger.debug('Exiting due to return value from handle_exception()')
                     return
-
-    def _unpack_input(self, activity_task):
-        """
-        Unpacks the message using the DataStore/Serializer declared in the Meta class.
-
-        Override if the DataStore/Serializer paradigm doesn't work for you.
-        :return: A serialized message if there is a data store but no serializer, a deserialized message if both exist,
-        and None if there is no data store.
-        """
-
-        if 'input' not in activity_task:
-            return None
-
-        serialized_message = self.Meta.data_store.get(activity_task['input'])
-
-        # If there is a data store defined, but no serializer, assume the "Null Serializer."  Just return the data
-        # without further processing.
-        self.logger.debug('Message was unpacked and deserialized')
-        return self.Meta.serializer.deserialize(serialized_message)
-
-    def _pack_input(self, input):
-        """
-        Packs the contents the message using the DataStore/Serializer declared in the Meta class.
-        :return: the contents to be placed in the input field
-        """
-        self.logger.debug('Packing a message')
-
-        serialized_message = self.Meta.serializer.serialize(input)
-
-        return self.Meta.data_store.put(serialized_message, '{}-{}'.format(self._activity_type, uuid.uuid4()))
-
-    def _pack_result(self, activity_task, result):
-        """
-        Packs the result using the DataStore/Serlializer declared in the Meta class.
-
-        The result of this is packed into the ActivityTaskCompletedEvent's result field.
-        Override if the DataStore/Serializer paradigm doesn't work for you.
-        :param activity_task:
-        :param result: an unserialized result message
-        :return: a result suitable for the result field of an ActivityTaskCompletedEvent
-        """
-        self.logger.debug('Packing an activity task result')
-        if not hasattr(self.Meta, 'serializer'):
-            self.logger.debug('No serializer attr defined in Meta; not serializing result')
-            return None
-
-        serialized_message = self.Meta.serializer.serialize(result)
-        return self.Meta.data_store.put(serialized_message,
-                                        activity_task['workflowExecution']['runId'])
-
-        self.logger.debug('Message was unpacked and deserialized')
-        return Meta.serializer.deserialize(serialized_message)
-
-    def _unpack_result(self, activity_task):
-        """
-        Unpacks the result using the DataStore/Serlializer declared in the Meta class.
-
-        :param activity_task:
-        :return:
-        """
-        self.logger.debug('Unpacking an activity task result')
-        serialized_result = self.Meta.data_store.get(activity_task.result)
-        self.logger.debug('Result was unpacked and deserialized')
-        return self.Meta.serializer.deserialize(serialized_result)
 
     @staticmethod
     def activity_task(f, attempts=5, retry_states=('FAILED_TO_SCHEDULE', 'FAILED', 'TIMED_OUT')):
