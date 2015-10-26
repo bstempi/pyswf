@@ -28,10 +28,7 @@ class ActivityWorker:
         All instances of an ActivityWorker will need a Meta class in order to define certain behavior.  This is modeled
         after Django.
         """
-        input_serializer = JsonSerializer()
-        input_data_store = SwfDataStore()
-        result_serializer = JsonSerializer()
-        result_data_store = SwfDataStore()
+        pass
 
     @abstractmethod
     def __init__(self, swf_domain=None, swf_task_list=None, activity_type=None,
@@ -203,7 +200,8 @@ class ActivityWorker:
                     activity = SwfDecisionContext.activities_iter.next()
                     p.set_activity(activity)
                     if activity.result:
-                        p.set_result(self._unpack_result(activity))
+                        serialized_result = self.Meta.result_data_store.get(activity.result)
+                        p.set_result(self.Meta.result_serializer.deserialize_result(serialized_result))
                     return p
                 except StopIteration:
 
@@ -211,11 +209,15 @@ class ActivityWorker:
                         SwfDecisionContext.decisions = Layer1Decisions()
 
                     # If we've run out of results, then I suppose that we're hitting new tasks
-                    SwfDecisionContext.decisions.schedule_activity_task(activity_id=SwfDecisionContext.get_next_id(),
+                    serialized_input = self.Meta.input_serializer.serialize_input(args, kwargs)
+                    task_id = SwfDecisionContext.get_next_id()
+                    key = '{}-task-{}'.format(SwfDecisionContext.workflow.run_id, task_id)
+                    swf_input = self.Meta.input_data_store.put(serialized_input, key)
+                    SwfDecisionContext.decisions.schedule_activity_task(activity_id=task_id,
                                                                         activity_type_name=self._activity_type,
                                                                         activity_type_version=self._activity_version,
                                                                         task_list=self._swf_task_list,
-                                                                        input=self._pack_input(input=(args, kwargs)))
+                                                                        input=swf_input)
                     activity = Activity(state='SCHEDULED')
                     p.set_activity(activity)
             else:

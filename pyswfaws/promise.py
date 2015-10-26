@@ -58,7 +58,7 @@ class DistributedPromise(Promise):
                                                                 activity_type_version=self._activity.version,
                                                                 task_list=self._activity.task_list,
                                                                 input=self._activity.input,
-                                                                control=self._serializer.serialize(control_data))
+                                                                control=self._serializer.serialize_result(control_data))
             thread.exit()
         if self._activity.state in self._failure_states:
             # We failed and we don't have retries or it's not a retryable failure
@@ -79,7 +79,7 @@ class DistributedPromise(Promise):
     def set_activity(self, activity):
         self._activity = activity
         if activity.control is not None:
-            control_data = self._serializer.deserialize(activity.control)
+            control_data = self._serializer.deserialize_result(activity.control)
             self._attempts = control_data['attempts']
             self._original_attempt_task_id = control_data['original_attempt_task_id']
         else:

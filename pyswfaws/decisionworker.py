@@ -30,10 +30,7 @@ class DecisionWorker:
         All instances of a DecisionWorker will need a Meta class in order to define certain behavior.  This is modeled
         after some of the classes in Django.
         """
-        input_serializer = JsonSerializer()
-        input_data_store = SwfDataStore()
-        result_serializer = JsonSerializer()
-        result_data_store = SwfDataStore()
+        pass
 
     @abstractmethod
     def __init__(self, mode, swf_domain=None, swf_task_list=None, aws_access_key_id=None, aws_secret_access_key=None):
@@ -247,8 +244,8 @@ class DecisionWorker:
                     if result:
                         serialized_result = self.Meta.result_serializer.serialize_result(result)
                         key = '{}-{}'.format(SwfDecisionContext.workflow.run_id, str(uuid.uuid4()))
-                        result = self.Meta.result_data_store.put(serialized_result, key)
-                    marker_details = self.Meta.data_store.put(details, str(uuid.uuid4()))
+                        details = self.Meta.result_data_store.put(serialized_result, key)
+                    marker_details = self.Meta.result_data_store.put(details, str(uuid.uuid4()))
                     SwfDecisionContext.decisions.record_marker('cache', marker_details)
                     return result
             else:
@@ -455,7 +452,7 @@ class DecisionWorker:
         ids_to_delete = list()
         for activity in activities_with_retries.itervalues():
             if activity.control:
-                control_data = json_serializer.deserialize(activity.control)
+                control_data = json_serializer.deserialize_result(activity.control)
                 original_task_id = control_data['original_attempt_task_id']
                 if activity.id != original_task_id:
                     # If we have a task that is a retry of another task, replace it in the map, maintaining

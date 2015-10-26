@@ -3,13 +3,13 @@ from nose.plugins.attrib import attr
 from decisionworker import DecisionWorker
 from activityworker import ActivityWorker
 from models import SwfDecisionContext
+from datastores import *
+from serializers import *
 
 import unittest
 import time
 
 import boto
-import serializers
-import datastores
 
 
 class TestDecider(DecisionWorker):
@@ -19,8 +19,10 @@ class TestDecider(DecisionWorker):
     class Meta:
         swf_domain = 'example'
         swf_task_list = 'some_list'
-        serializer = serializers.JsonSerializer()
-        data_store = datastores.SwfDataStore()
+        input_serializer = JsonSerializer()
+        input_data_store = SwfDataStore()
+        result_serializer = JsonSerializer()
+        result_data_store = SwfDataStore()
 
     def __init__(self, mode):
         super(TestDecider, self).__init__(mode=mode)
@@ -41,8 +43,10 @@ class TestDeciderWithCachedResult(DecisionWorker):
     class Meta:
         swf_domain = 'example'
         swf_task_list = 'some_list'
-        serializer = serializers.JsonSerializer()
-        data_store = datastores.SwfDataStore()
+        input_serializer = JsonSerializer()
+        input_data_store = SwfDataStore()
+        result_serializer = JsonSerializer()
+        result_data_store = SwfDataStore()
 
     def __init__(self, mode):
         super(TestDeciderWithCachedResult, self).__init__(mode=mode)
@@ -74,8 +78,10 @@ class TestActivityWorkerA(ActivityWorker):
         swf_task_list = 'activity_a_test'
         activity_type = 'TestActivityA'
         activity_version = '1.0'
-        serializer = serializers.JsonSerializer()
-        data_store = datastores.SwfDataStore()
+        input_serializer = JsonSerializer()
+        input_data_store = SwfDataStore()
+        result_serializer = JsonSerializer()
+        result_data_store = SwfDataStore()
 
     def __init__(self):
         super(TestActivityWorkerA, self).__init__()
@@ -94,8 +100,10 @@ class TestActivityWorkerB(ActivityWorker):
         swf_task_list = 'activity_b_test'
         activity_type = 'TestActivityB'
         activity_version = '1.0'
-        serializer = serializers.JsonSerializer()
-        data_store = datastores.SwfDataStore()
+        input_serializer = JsonSerializer()
+        input_data_store = SwfDataStore()
+        result_serializer = JsonSerializer()
+        result_data_store = SwfDataStore()
 
     def __init__(self):
         super(TestActivityWorkerB, self).__init__()
@@ -103,47 +111,6 @@ class TestActivityWorkerB(ActivityWorker):
     @ActivityWorker.activity_task
     def handle_task(self, b):
         return b / 2
-
-
-class CoreSerialTest(unittest.TestCase):
-    """
-    Tests to make sure that serial execution works
-    """
-    def test_core_serial_happy_path(self):
-        SwfDecisionContext.mode = SwfDecisionContext.SerialLocal
-
-        # Test to make sure the workers function correctly
-        test_worker_a = TestActivityWorkerA()
-        result_a = test_worker_a.handle_task(6)
-        self.assertEqual(True, result_a.is_ready)
-        self.assertEqual(36, result_a.result)
-
-        test_worker_b = TestActivityWorkerB()
-        result_b = test_worker_b.handle_task(6)
-        self.assertEqual(True, result_b.is_ready)
-        self.assertEqual(3, result_b.result)
-
-        test_decider = TestDecider(SwfDecisionContext.SerialLocal)
-        final_result = test_decider.handle()
-        self.assertEqual(final_result, 39)
-
-    def test_core_with_marker_happy_path(self):
-        SwfDecisionContext.mode = SwfDecisionContext.SerialLocal
-
-        # Test to make sure the workers function correctly
-        test_worker_a = TestActivityWorkerA()
-        result_a = test_worker_a.handle_task(6)
-        self.assertEqual(True, result_a.is_ready)
-        self.assertEqual(36, result_a.result)
-
-        test_worker_b = TestActivityWorkerB()
-        result_b = test_worker_b.handle_task(6)
-        self.assertEqual(True, result_b.is_ready)
-        self.assertEqual(3, result_b.result)
-
-        test_decider = TestDeciderWithCachedResult(SwfDecisionContext.SerialLocal)
-        final_result = test_decider.handle()
-        self.assertEqual(final_result, 40)
 
 
 @attr('integration')
@@ -172,7 +139,7 @@ class LiveSwfWorkflowTest(unittest.TestCase):
         LiveSwfWorkflowTest.decider_cached_process.start()
         LiveSwfWorkflowTest.activity_worker_a_process.start()
         LiveSwfWorkflowTest.activity_worker_b_process.start()
-        time.sleep(5)
+        time.sleep(15)
 
     @classmethod
     def tearDownClass(cls):

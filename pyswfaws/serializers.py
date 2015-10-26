@@ -5,10 +5,11 @@ from abc import ABCMeta, abstractmethod
 from google.protobuf import message
 
 
-class Serializer(metaclass=ABCMeta):
+class Serializer():
     """
     Defines how to serialize/unserialize messages used in SWF communications
     """
+    __metaclass__ = ABCMeta
 
     @abstractmethod
     def deserialize_input(self, raw_inputs):
@@ -61,6 +62,8 @@ class ProtobufSerializer(Serializer):
     as input, then it may appear in teh args or kwargs, but not both.  There must be exactly one argument.
     """
 
+    __slots__ = ['_message_class']
+
     def __init__(self, message_class):
         test_instance = message_class()
         if not isinstance(test_instance, message.Message):
@@ -109,6 +112,8 @@ class JsonSerializer(Serializer):
     Handles serialization/deserializaton of protobuf messages
     """
 
+    __slots__ = []
+
     def __init__(self):
         pass  # Nothing to do here
 
@@ -116,10 +121,10 @@ class JsonSerializer(Serializer):
         return json.loads(raw_inputs)
 
     def deserialize_result(self, raw_result):
-         return json.loads(raw_result)
+        return json.loads(raw_result)
 
     def serialize_input(self, args, kwargs):
         return json.dumps((args, kwargs))
 
     def serialize_result(self, result):
-        return json.dumps(message)
+        return json.dumps(result)
