@@ -72,7 +72,9 @@ class ProtobufSerializer(Serializer):
         self._message_class = message_class
 
     def deserialize_input(self, raw_inputs):
-        return self.deserialize_result(raw_inputs)
+        result = (list(), dict())
+        result[0].append(self.deserialize_result(raw_inputs))
+        return result
 
     def deserialize_result(self, raw_result):
         deserialized_message = self._message_class()
