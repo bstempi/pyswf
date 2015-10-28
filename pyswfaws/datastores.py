@@ -82,8 +82,10 @@ class S3DataStore(DataStore):
         """
         self._s3_client = boto.connect_s3(aws_access_key_id=aws_key, aws_secret_access_key=aws_secret)
         self._bucket = self._s3_client.get_bucket(bucket, validate=False)
-        if base_key[-1:] != '/':
+        if base_key != '' and base_key[-1:] != '/':
             self._base_key_name = base_key + '/'
+        else:
+            self._base_key_name = ''
 
     def put(self, message, key):
         """
