@@ -145,7 +145,7 @@ class DecisionWorker:
                                                                           task_list=self._swf_task_list,
                                                                           next_page_token=next_page_token)
                     if 'events' in additional_history:
-                        history.append(additional_history['events'])
+                        history.extend(additional_history['events'])
 
                     decision_task['events'] = list()
                     next_page_token = additional_history.get('nextPageToken')
