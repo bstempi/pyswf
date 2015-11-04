@@ -18,7 +18,7 @@ here = path.abspath(path.dirname(__file__))
 install_reqs = parse_requirements(path.join(here, 'requirements.txt'), session=PipSession())
 
 # Get the long description from the README file
-with open(path.join(here, 'README.md'), encoding='utf-8') as f:
+with open(path.join(here, 'pypi.rst'), encoding='utf-8') as f:
     long_description = f.read()
 
 setup(
@@ -33,7 +33,7 @@ setup(
     long_description=long_description,
 
     # The project's main homepage.
-    url='https://github.com/bstempi/pyswf.git',
+    url='http://pyswf.readthedocs.org/en/latest/',
 
     # Author details
     author='Brian Stempin',
