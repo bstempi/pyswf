@@ -81,6 +81,8 @@ class SwfDecisionContext(object):
     decisions = None
     activities = None
     activities_iter = None
+    child_workflows = None
+    child_workflows_iter = None
     cache_markers = None
     cache_markers_iter = None
     signals = None
@@ -98,21 +100,23 @@ class SwfDecisionContext(object):
     def reset():
         # DO NOT RESET THE MODE
         #self.mode = self.SerialLocal
-        decision_task = None
-        swf_history = None
-        decisions = None
-        activities = None
-        activities_iter = None
-        signals = None
-        signals_iter = None
-        timers = None
-        timers_iter = None
-        workflow = None
-        finished = False
-        output = None
-        exception = None
-        trace_back = None
-        _id_generator = 0
+        SwfDecisionContext.child_workflows = None
+        SwfDecisionContext.child_workflows_iter = None
+        SwfDecisionContext.decision_task = None
+        SwfDecisionContext.swf_history = None
+        SwfDecisionContext.decisions = None
+        SwfDecisionContext.activities = None
+        SwfDecisionContext.activities_iter = None
+        SwfDecisionContext.signals = None
+        SwfDecisionContext.signals_iter = None
+        SwfDecisionContext.timers = None
+        SwfDecisionContext.timers_iter = None
+        SwfDecisionContext.workflow = None
+        SwfDecisionContext.finished = False
+        SwfDecisionContext.output = None
+        SwfDecisionContext.exception = None
+        SwfDecisionContext.trace_back = None
+        SwfDecisionContext._id_generator = 0
 
     @staticmethod
     def get_next_id():
