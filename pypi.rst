@@ -2,7 +2,7 @@ PySwfAws: Making SWF Easy
 ============================
 
 .. image:: https://travis-ci.org/bstempi/pyswf.svg
-.. image:: https://readthedocs.org/projects/pyswf/badge/?version=latest)](http://pyswf.readthedocs.org/en/latest/?badge=latest
+.. image:: https://readthedocs.org/projects/pyswf/badge/?version=latest
 .. image:: https://ghbtns.com/github-btn.html?user=bstempi&repo=pyswf&type=star&count=true
 .. _documentation: http://pyswf.readthedocs.org/en/latest/
 
