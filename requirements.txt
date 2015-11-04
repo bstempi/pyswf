@@ -4,3 +4,4 @@ protobuf
 nose
 pytz
 python-dateutil
+venusian
