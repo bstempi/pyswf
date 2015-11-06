@@ -17,13 +17,22 @@ class Promise(object):
 
     For an explanation of a promise, see https://en.wikipedia.org/wiki/Futures_and_promises
     """
-    result = None
     is_ready = False
+    exception = None
+    result = None
+
+    @property
+    def result(self):
+        if self.exception:
+            raise self.exception
+        if not self.is_ready:
+            raise Exception('Promise is not ready yet!')
+        return self.result
 
 
-class DistributedPromise(Promise):
+class DistributedActivityPromise(Promise):
     """
-    Represents a promise when running in distributed mode.
+    Represents a promise from an activity task when running in distributed mode.
 
     This promise has special logic for being able to exit the current thread when it is called upon to return a
     result that it does not yet have.
@@ -31,15 +40,10 @@ class DistributedPromise(Promise):
 
     _logger = logging.getLogger('pyswfaws.DistributedPromise')
     _activity = None
-    _attempts = 1
     _failure_states = ('FAILED_TO_SCHEDULE', 'FAILED', 'TIMED_OUT', 'CANCELED')
-    _serializer = JsonSerializer()
-    _original_attempt_task_id = None
-    _result = None
 
-    def __init__(self, attempts, retry_states):
-        self._max_attempts = attempts
-        self._retry_states = retry_states
+    def __init__(self, activity):
+        self._activity = activity
 
     @property
     def result(self):
@@ -47,47 +51,71 @@ class DistributedPromise(Promise):
             # If the task is still running
             self._logger.debug("Stopping execution due to promises not being fulfilled.")
             thread.exit()
-        if self._activity.state in self._failure_states and self._attempts < self._max_attempts:
-            # If we are in a retryable state and we have retries left
-            self._logger.debug("Stopping execution due to activity task requiring a retry.")
-            control_data = dict()
-            control_data['attempts'] = self._attempts + 1
-            control_data['original_attempt_task_id'] = self._original_attempt_task_id
-            SwfDecisionContext.decisions.schedule_activity_task(activity_id=SwfDecisionContext.get_next_id(),
-                                                                activity_type_name=self._activity.type,
-                                                                activity_type_version=self._activity.version,
-                                                                task_list=self._activity.task_list,
-                                                                input=self._activity.input,
-                                                                control=self._serializer.serialize_result(control_data))
-            thread.exit()
         if self._activity.state in self._failure_states:
             # We failed and we don't have retries or it's not a retryable failure
-            raise ActivityTaskException(task_name=self._activity.type, task_version=self._activity.version,
-                                        task_id=self._activity.id, failure_reason=self._activity.failure_reason,
-                                        failure_status=self._activity.state)
-            thread.exit()
+            raise self.exception
         else:
             # We finished
-            return self._result
+            return self._activity.result
 
     @property
     def is_ready(self):
-        if self._activity.state == 'COMPLETED':
+        if self._activity.state == 'COMPLETED' or self._activity.state in self._failure_states:
             return True
         return False
 
-    def set_activity(self, activity):
-        self._activity = activity
-        if activity.control is not None:
-            control_data = self._serializer.deserialize_result(activity.control)
-            self._attempts = control_data['attempts']
-            self._original_attempt_task_id = control_data['original_attempt_task_id']
-        else:
-            self._attempts = 1
-            self._original_attempt_task_id = activity.id
+    @property
+    def exception(self):
+        if self._activity.state not in self._failure_states:
+            return None
+        self._logger.debug('Generating exception')
+        return ActivityTaskException(task_name=self._activity.type, task_version=self._activity.version,
+                                     task_id=self._activity.id, failure_reason=self._activity.failure_reason,
+                                     failure_status=self._activity.state)
 
-    def set_result(self, result):
-        self._result = result
+
+class DistributedChildWorkflowPromise(Promise):
+    """
+    Represents a promise from an child workflow when running in distributed mode.
+
+    This promise has special logic for being able to exit the current thread when it is called upon to return a
+    result that it does not yet have.
+    """
+
+    _logger = logging.getLogger('pyswfaws.DistributedPromise')
+    _cwf = None
+    _failure_states = ('FAILED_TO_SCHEDULE', 'FAILED', 'TIMED_OUT', 'CANCELED')
+
+    def __init__(self, cwf):
+        self._cwf = cwf
+
+    @property
+    def result(self):
+        if self._cwf.state in ('SCHEDULED', 'STARTED'):
+            # If the task is still running
+            self._logger.debug("Stopping execution due to promises not being fulfilled.")
+            thread.exit()
+        if self._cwf.state in self._failure_states:
+            # We failed and we don't have retries or it's not a retryable failure
+            raise self.exception
+        else:
+            # We finished
+            return self._cwf.result
+
+    @property
+    def is_ready(self):
+        if self._cwf.state == 'COMPLETED' or self._cwf.state in self._failure_states:
+            return True
+        return False
+
+    @property
+    def exception(self):
+        if self._cwf.state not in self._failure_states:
+            return None
+        self._logger.debug('Generating exception')
+        return ActivityTaskException(task_name=self._cwf.type, task_version=self._cwf.version,
+                                     task_id=self._cwf.run_id, failure_reason=self._cwf.failure_reason,
+                                     failure_status=self._cwf.state)
 
 
 class Timer(Promise):

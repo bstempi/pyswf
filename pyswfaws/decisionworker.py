@@ -416,7 +416,7 @@ class DecisionWorker:
                     child_workflow.parent_workflow_id = e['childWorkflowExecutionStartedEventAttributes']['parentWorkflowExecution']['workflowId']
                     child_workflow.parent_run_id = e['childWorkflowExecutionStartedEventAttributes']['parentWorkflowExecution']['runId']
                 child_workflow.run_id = e['childWorkflowExecutionStartedEventAttributes']['workflowExecution']['runId']
-                child_workflow.state = 'RUNNING'
+                child_workflow.state = 'STARTED'
                 child_workflows[child_workflow.run_id] = child_workflow
             elif et == 'ChildWorkflowExecutionTerminated':
                 id = e['childWorkflowExecutionTerminatedEventAttributes']['initiatedEventId']
@@ -425,7 +425,7 @@ class DecisionWorker:
             elif et == 'ChildWorkflowExecutionTimedOutEvent':
                 id = e['childWorkflowExecutionTerminatedEventAttributes']['initiatedEventId']
                 child_workflow = child_workflows[id]
-                child_workflow.state = 'TIMEDOUT'
+                child_workflow.state = 'TIMED_OUT'
             elif et == 'StartChildWorkflowExecutionFailed':
                 id = e['startChildWorkflowExecutionFailedEventAttributes']['initiatedEventId']
                 child_workflow = child_workflows[id]
