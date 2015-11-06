@@ -2,6 +2,8 @@
 Defines models that help better represent SWF events.
 """
 
+from boto.swf.layer1_decisions import Layer1Decisions
+
 
 class Activity(object):
     """
@@ -66,62 +68,33 @@ class SwfDecisionContext(object):
     """
     Represents the context of a decision task.
 
-    This object contains data about a decision task, such as the history.  It also contains the "mode" of the
-    operation (e.g., running locally, distributed, etc.
-
-    The members of this class are meant to be used in a static fashion.  The intention is that there is some thread (
-    A) that listens for decision tasks and some thread (B) that processes that decision via replay.  This class and
-    it's static members are the data transfer mechanism between A and B.
+    This object contains data about a decision task, such as the history.  Mere mortals should not be playing with
+    this class.
     """
 
-    Distributed, SerialLocal = range(2)
-    mode = SerialLocal
-    decision_task = None
-    swf_history = None
-    decisions = None
-    activities = None
-    activities_iter = None
-    child_workflows = None
-    child_workflows_iter = None
-    cache_markers = None
-    cache_markers_iter = None
-    signals = None
-    signals_iter = None
-    timers = None
-    timers_iter = None
-    workflow = None
-    finished = False
-    exception = None
-    trace_back = None
+    __slots__ = ['decision_task', 'swf_history', 'decisions', 'activities', 'activities_iter', 'child_workflows',
+                 'child_workflows_iter', 'cache_markers', 'cache_markers_iter', 'signals', 'signals_iter', 'timers',
+                 'timers_iter', 'workflow', '_id_generator']
 
-    _id_generator = 0
+    def __init__(self, **kwargs):
+        for slot in self.__slots__:
+            setattr(self, slot, None)
+        for k, v in kwargs.iteritems():
+            setattr(self, k, v)
 
-    @staticmethod
-    def reset():
-        # DO NOT RESET THE MODE
-        #self.mode = self.SerialLocal
-        SwfDecisionContext.child_workflows = None
-        SwfDecisionContext.child_workflows_iter = None
-        SwfDecisionContext.decision_task = None
-        SwfDecisionContext.swf_history = None
-        SwfDecisionContext.decisions = None
-        SwfDecisionContext.activities = None
-        SwfDecisionContext.activities_iter = None
-        SwfDecisionContext.signals = None
-        SwfDecisionContext.signals_iter = None
-        SwfDecisionContext.timers = None
-        SwfDecisionContext.timers_iter = None
-        SwfDecisionContext.workflow = None
-        SwfDecisionContext.finished = False
-        SwfDecisionContext.output = None
-        SwfDecisionContext.exception = None
-        SwfDecisionContext.trace_back = None
-        SwfDecisionContext._id_generator = 0
+        # No matter what, make sure we have a fresh deicions object
+        if self.decisions is None:
+            self.decisions = Layer1Decisions()
+            self._id_generator = 0
 
-    @staticmethod
-    def get_next_id():
-        SwfDecisionContext._id_generator += 1
-        return str(SwfDecisionContext._id_generator)
+    def get_next_id(self):
+        """
+        Generates ids in a deterministic way as strings for use in setting activity and child workflow ids.
+
+        :return: a unique string id
+        """
+        self._id_generator += 1
+        return str(self._id_generator)
 
 
 class Timer(object):
