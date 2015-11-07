@@ -40,9 +40,9 @@ class DistributedActivityWorker(object):
         scanner = venusian.Scanner(registry=registry, mode='remote', caller='activity_worker')
 
         # Some trickery here -- scan the module that the activity worker method is found in
-        scanner.scan(sys.modules[activity_function.__module__])
+        scanner.scan(sys.modules[activity_function.__module__], categories=('pyswfaws.activity_task', ))
 
-        if hasattr(activity_function, 'swf_options'):
+        if hasattr(self._activity_function, 'swf_options'):
 
             # Give preference to the values in the constructor
             self._swf_domain = self.choose_first_not_none('An SWF domain must be specified by the activity worker '
@@ -128,8 +128,11 @@ class DistributedActivityWorker(object):
 
 
 class Registry(object):
-    def __init__(self):
-        self.registered = []
 
-    def add(self, name, ob):
-        self.registered.append((name, ob))
+    __slots__ = ['registered']
+
+    def __init__(self):
+        self.registered = dict()
+
+    def add(self, orig_func, modified_func):
+        self.registered[orig_func] = modified_func
