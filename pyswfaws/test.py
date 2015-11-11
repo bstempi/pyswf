@@ -37,7 +37,7 @@ def activity_task_a(a):
 def activity_task_b(b):
     return b + b
 
-# @attr('integration')
+ @attr('integration')
 class LiveSwfWorkflowTest(unittest.TestCase):
     """
     Test that runs a workflow in SWF
