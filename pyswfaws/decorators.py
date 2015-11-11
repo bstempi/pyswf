@@ -3,8 +3,10 @@ Defines the decorators used to decorate activity and decision functions
 """
 
 import inspect
-import venusian
+import types
 import uuid
+
+import venusian
 
 from models import Activity, Workflow
 from promise import DistributedActivityPromise, DistributedChildWorkflowPromise, Promise
@@ -69,7 +71,7 @@ def activity_task(swf_domain=None, swf_task_type=None, swf_task_version=None, sw
                 :param kwargs:
                 :return:
                 """
-                if scanner.control_serializer is None:
+                if not hasattr(scanner, 'control_serializer'):
                     scanner.control_serializer = JsonSerializer()
 
                 decision_context = scanner.decision_context
@@ -138,55 +140,44 @@ def activity_task(swf_domain=None, swf_task_type=None, swf_task_version=None, sw
             # Get the mode, defaulting to local mode.
             mode = getattr(scanner, 'mode', 'local')
             caller = getattr(scanner, 'caller', None)
-            if (mode == 'local' and caller is None) or caller == 'activity_worker':
-                # We don't want to change the operation of the function; we just want to add some data
-                f.swf_options = dict()
-                f.swf_options['domain'] = swf_domain
-                f.swf_options['task_type'] = swf_task_type
-                f.swf_options['task_version'] = swf_task_version
-                f.swf_options['task_list'] = swf_task_list
-
-                f.retry_options = dict()
-                f.retry_options['max_attempts'] = max_attempts
-                f.retry_options['retry_states'] = retry_states
-
-                f.serialization_options = dict()
-                f.serialization_options['input_serializer'] = input_data_serializer
-                f.serialization_options['input_data_store'] = input_data_store
-                f.serialization_options['result_serializer'] = result_data_serializer
-                f.serialization_options['result_data_store'] = result_data_store
 
             if mode == 'local' and caller == 'decision_worker':
                 # We treat this as a serial call from the decider
-                scanner.registry.add(name, decider_local_activity_task)
+                scanner.registry.add(ob, decider_local_activity_task)
+                ob.decorated = decider_local_activity_task
             elif mode == 'remote' and caller == 'decision_worker':
                 # We don't want to call the actual function at all; use the remote handler
+                scanner.registry.add(ob, decider_remote_activity_task)
+                ob.decorated = decider_remote_activity_task
 
-                # Set some function properties for the runners to discover
-                # Better to store this data as function properties vs storing it in the scanner since everyone can read
-                # the function properties.  Presumably, only few will have access to the scanner.
-                decider_remote_activity_task.swf_options = dict()
-                decider_remote_activity_task.swf_options['domain'] = swf_domain
-                decider_remote_activity_task.swf_options['task_type'] = swf_task_type
-                decider_remote_activity_task.swf_options['task_version'] = swf_task_version
-                decider_remote_activity_task.swf_options['task_list'] = swf_task_list
+        # Make a copy of our dynamic function so that every function that we return has independent attributes
+        d_f_copy = DynamicCallableFunction(original_function=f)
 
-                decider_remote_activity_task.retry_options = dict()
-                decider_remote_activity_task.retry_options['max_attempts'] = max_attempts
-                decider_remote_activity_task.retry_options['retry_states'] = retry_states
+        # Setting properties on our returned function
+        d_f_copy.swf_options = dict()
+        d_f_copy.swf_options['domain'] = swf_domain
+        d_f_copy.swf_options['task_type'] = swf_task_type
+        d_f_copy.swf_options['task_version'] = swf_task_version
+        d_f_copy.swf_options['task_list'] = swf_task_list
 
-                decider_remote_activity_task.serialization_options = dict()
-                decider_remote_activity_task.serialization_options['input_serializer'] = input_data_serializer
-                decider_remote_activity_task.serialization_options['input_data_store'] = input_data_store
-                decider_remote_activity_task.serialization_options['result_serializer'] = result_data_serializer
-                decider_remote_activity_task.serialization_options['result_data_store'] = result_data_store
+        d_f_copy.retry_options = dict()
+        d_f_copy.retry_options['max_attempts'] = max_attempts
+        d_f_copy.retry_options['retry_states'] = retry_states
 
-                scanner.registry.add(name, decider_remote_activity_task)
-        venusian.attach(f, callback, category='pyswfaws.activity_task')
-        return f
+        d_f_copy.serialization_options = dict()
+        d_f_copy.serialization_options['input_serializer'] = input_data_serializer
+        d_f_copy.serialization_options['input_data_store'] = input_data_store
+        d_f_copy.serialization_options['result_serializer'] = result_data_serializer
+        d_f_copy.serialization_options['result_data_store'] = result_data_store
+
+        # Venusian magic
+        venusian.attach(d_f_copy, callback, category='pyswfaws.activity_task')
+
+        return d_f_copy
     return wrapper
 
-def decision_task(f, swf_domain=None, swf_workflow_type=None, swf_workflow_version=None, swf_task_list=None,
+
+def decision_task(swf_domain=None, swf_workflow_type=None, swf_workflow_version=None, swf_task_list=None,
                   input_data_serializer=None, input_data_store=None, result_data_serializer=None,
                   result_data_store=None, continues_indefinitely=False):
     """
@@ -281,103 +272,115 @@ def decision_task(f, swf_domain=None, swf_workflow_type=None, swf_workflow_versi
             caller = getattr(scanner, 'caller', None)
             parent_decision_worker = getattr(scanner, 'parent_decision_worker', None)
 
-            # IF this was called by a decision worker and this function isn't the decision task that's runnign the
+            # IF this was called by a decision worker and this function isn't the decision task that's running the
             # workflow, then we have a child workflow
+            # TODO Revisit this; idk wtf
             if caller == 'decision_worker' and parent_decision_worker != ob:
                 if mode == 'remote':
-                    scanner.registry.add(name, decider_remote_child_workflow)
+                    scanner.registry.add(ob, decider_remote_child_workflow)
+                    ob.decorated = decider_remote_child_workflow
                 else:
-                    scanner.registry.add(name, decider_local_child_workflow)
-            # Just attach meta data to f and be done with
-            else:
-                f.swf_options = dict()
-                f.swf_options['domain'] = swf_domain
-                f.swf_options['wf_type'] = swf_workflow_type
-                f.swf_options['wf_version'] = swf_workflow_version
-                f.swf_options['task_list'] = swf_task_list
+                    scanner.registry.add(ob, decider_local_child_workflow)
+                    ob.decorated = decider_local_child_workflow
 
-                f.serialization_options = dict()
-                f.serialization_options['input_serializer'] = input_data_serializer
-                f.serialization_options['input_data_store'] = input_data_store
-                f.serialization_options['result_serializer'] = result_data_serializer
-                f.serialization_options['result_data_store'] = result_data_store
+        wrapped_f = DynamicCallableFunction(original_function=f)
+        wrapped_f.swf_options = dict()
+        wrapped_f.swf_options['domain'] = swf_domain
+        wrapped_f.swf_options['wf_type'] = swf_workflow_type
+        wrapped_f.swf_options['wf_version'] = swf_workflow_version
+        wrapped_f.swf_options['task_list'] = swf_task_list
 
-        venusian.attach(f, callback, category='pyswfaws.decision_task')
-        return f
+        wrapped_f.serialization_options = dict()
+        wrapped_f.serialization_options['input_serializer'] = input_data_serializer
+        wrapped_f.serialization_options['input_data_store'] = input_data_store
+        wrapped_f.serialization_options['result_serializer'] = result_data_serializer
+        wrapped_f.serialization_options['result_data_store'] = result_data_store
+
+        # Venusian magic
+        venusian.attach(wrapped_f, callback, category='pyswfaws.decision_task')
+
+        return wrapped_f
     return wrapper
 
 
-def cached(f, result_data_store, result_data_serializer):
+def cached(result_data_store, result_data_serializer):
     """
     Decorates a function as something that should be cached.
 
     This decorator does not change the behavior of a function unless it is being run within a decisioner.  When run
     in remote mode, this decorator will run the function once and store it's result, using that initial return value
     as the return value for future calls.  Local mode will do the same thing, but with a dict.
-    :param f:
+    :param result_data_serializer:
+    :param result_data_store:
     :return:
     """
-    def callback(scanner, name, ob):
-        """
-        Uses the scanner to determine the mode of operation, and thus which wrapper should be used.
+    def wrapped(f):
+        def callback(scanner, name, ob):
+            """
+            Uses the scanner to determine the mode of operation, and thus which wrapper should be used.
 
-        :param scanner:
-        :param name:
-        :param ob:
-        :return:
-        """
+            :param scanner:
+            :param name:
+            :param ob:
+            :return:
+            """
 
-        saved_results = dict()
+            saved_results = dict()
 
-        def cache_result_in_marker(*args, **kwargs):
-            decision_context = scanner.decision_context
+            def cache_result_in_marker(*args, **kwargs):
+                decision_context = scanner.decision_context
 
-            # First, see if we have any cache markers and try to return the result from there
-            try:
-                cached_result = decision_context.cache_markers_iter.next()
-                result = None
-                if cached_result.details:
-                    serialized_result = result_data_store.get(cached_result.details)
-                    result = result_data_serializer.deserialize_result(serialized_result)
-                return result
+                # First, see if we have any cache markers and try to return the result from there
+                try:
+                    cached_result = decision_context.cache_markers_iter.next()
+                    result = None
+                    if cached_result.details:
+                        serialized_result = result_data_store.get(cached_result.details)
+                        result = result_data_serializer.deserialize_result(serialized_result)
+                    return result
 
-            # If we're in the except body, then this is a result that's never been run/cached before
-            except StopIteration:
+                # If we're in the except body, then this is a result that's never been run/cached before
+                except StopIteration:
 
-                # Run the method
-                result = f(*args, **kwargs)
+                    # Run the method
+                    result = f(*args, **kwargs)
 
-                # Serialize the result
-                if result:
-                    serialized_result = result_data_serializer.serialize_result(result)
-                    key = '{}-{}'.format(decision_context.workflow.run_id, str(uuid.uuid4()))
-                    data_store_key = result_data_store.put(serialized_result, key)
+                    # Serialize the result
+                    if result:
+                        serialized_result = result_data_serializer.serialize_result(result)
+                        key = '{}-{}'.format(decision_context.workflow.run_id, str(uuid.uuid4()))
+                        data_store_key = result_data_store.put(serialized_result, key)
 
-                # Store a marker in SWF
-                decision_context.decisions.record_marker('cache', data_store_key)
+                    # Store a marker in SWF
+                    decision_context.decisions.record_marker('cache', data_store_key)
 
-                # Give the result back to the caller
-                return result
+                    # Give the result back to the caller
+                    return result
 
-        def cache_result_locally(*args, **kwargs):
-            caller = ob.__name__
+            def cache_result_locally(*args, **kwargs):
 
-            # Put it in the map if it's not already there
-            if caller not in saved_results:
-                result = f(*args, **kwargs)
-                saved_results[caller] = result
+                # Put it in the map if it's not already there
+                if caller not in saved_results:
+                    result = f(*args, **kwargs)
+                    saved_results[caller] = result
 
-            return saved_results[caller]
+                return saved_results[caller]
 
-        # Get the mode, defaulting to local mode.
-        mode = getattr(scanner, 'mode', 'local')
-        caller = getattr(scanner, 'caller', None)
+            # Get the mode, defaulting to local mode.
+            mode = getattr(scanner, 'mode', 'local')
+            caller = getattr(scanner, 'caller', None)
 
-        if mode == 'remote' and caller == 'decision_worker':
-            scanner.registry.add(name, cache_result_in_marker())
+            if mode == 'remote' and caller == 'decision_worker':
+                scanner.registry.add(ob, cache_result_in_marker)
+                ob.decorated = cache_result_in_marker
+            else:
+                scanner.registry.add(ob, cache_result_locally)
+                ob.decorated = cache_result_locally
 
-    venusian.attach(f, callback, category='pyswfaws.decision_task')
-    return f
+        wrapped_f = DynamicCallableFunction(f)
+        venusian.attach(wrapped_f, callback, category='pyswfaws.decision_task')
+        return wrapped_f
+    return wrapped
 
 
 def nondeterministic(f, result_data_store, result_data_serializer):
@@ -389,3 +392,28 @@ def nondeterministic(f, result_data_store, result_data_serializer):
     :return:
     """
     cached(f, result_data_store, result_data_serializer)
+
+
+class DynamicCallableFunction(object):
+    """
+    Callable object that acts as a dynamic function
+
+    When the decorator is first read, the original function is thinly wrapped with this class and passed
+    through.  The idea is that later on when we do a Venucian scan, we can modify that object to know which
+    function it should be calling instead.  This is being done as a class because attaching state to
+    functions is a pain.  Specifically, there's no equivalent of self for a function, so if we have copies of
+    functions with unique attributes, it's hard to get to those attributes,
+    """
+    __slots__ = ['orig', 'decorated', 'swf_options', 'retry_options', 'serialization_options',
+                 '__venusian_callbacks__']
+
+    def __init__(self, original_function):
+        if original_function is None:
+            raise Exception('The original function must be passed in during construction and cannot be None')
+        self.orig = original_function
+        self.decorated = None
+
+    def __call__(self, *args, **kwargs):
+        if self.decorated is None:
+            return self.orig(*args, **kwargs)
+        return self.decorated(*args, **kwargs)

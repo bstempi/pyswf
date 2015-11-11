@@ -9,6 +9,8 @@ from abc import abstractmethod
 from collections import OrderedDict
 
 import boto
+import venusian
+import pyswfaws.decorators
 
 from boto.swf.layer1_decisions import Layer1Decisions
 from models import *
@@ -17,66 +19,67 @@ from datastores import *
 from promise import *
 
 
-class DecisionWorker:
+class DistributedDecisionWorker:
     """
-    This class is the base of all decision workers.  It is responsible for the event loop, message serialization, and
-    message storage.  It also help manages workflow state.
+    This class is the base of all distributed decision workers.
+
+    In order to run a decision task in distributed mode, users must take this class (or a sub class) and instantiate
+    it with a decision function and any last-minute configs.  The user should then call `start`, which will begin an
+     infinite loop that listens for and acts on activity tasks from SWF.
     """
 
-    __metaclass__ = ABCMeta
-    logger = logging.getLogger('pyswfaws.DecisionWorker')
+    logger = logging.getLogger(__name__)
 
-    class Meta:
+    def __init__(self, decision_function, swf_domain=None, swf_task_list=None, workflow_type=None,
+                 workflow_version=None, aws_access_key_id=None, aws_secret_access_key=None):
         """
-        All instances of a DecisionWorker will need a Meta class in order to define certain behavior.  This is modeled
-        after some of the classes in Django.
-        """
-        pass
 
-    @abstractmethod
-    def __init__(self, mode, swf_domain=None, swf_task_list=None, aws_access_key_id=None, aws_secret_access_key=None):
-        """
-        Inits a decision worker ready for running
-        :param mode: One of the modes in the SwfDecisionContext.
-        :param swf_domain: SWF domain used by this worker
-        :param swf_task_list: SWF task list that this worker is listening to
-        :param aws_access_key_id: Access key to use for S3 and SWF.  If none is supplied, boto will fallback to looking for credentials elsewhere.
-        :param aws_secret_access_key: Secret key to use for S3 and SWF.  If none is supplied, boto will fallback to looking for credentials elsewhere.
+        :param decision_function:
+        :param swf_domain:
+        :param swf_task_list:
+        :param workflow_type:
+        :param workflow_version:
+        :param aws_access_key_id:
+        :param aws_secret_access_key:
         :return:
         """
 
-        SwfDecisionContext.mode = mode
+        self._swf = boto.connect_swf(aws_access_key_id=aws_access_key_id,
+                                     aws_secret_access_key=aws_secret_access_key)
+        self._decision_function = decision_function
 
-        # Make sure there's a Meta class
-        if not hasattr(self, 'Meta'):
-            raise Exception('Every decision worker class must have an inner Meta class to provide configurations')
+        registry = Registry()
+        self._scanner = venusian.Scanner(registry=registry, mode='remote', caller='decision_worker')
+        self._scanner.parent_decision_worker = decision_function
 
-        if mode in (SwfDecisionContext.SerialLocal, ):
-            # Nothing else to do here
-            pass
-        elif mode == SwfDecisionContext.Distributed:
-            self.logger.debug('Starting SWF client')
+        # Some trickery here -- scan the module that the activity worker method is found in
+        self._scanner.scan(sys.modules[decision_function.orig.__module__], categories=('pyswfaws.activity_task',
+                                                                                       'pyswfaws.decision_task'))
 
-            self._swf = boto.connect_swf(aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key)
+        if hasattr(self._decision_function, 'swf_options'):
+
+            # Give preference to the values in the constructor
+            self._swf_domain = self.choose_first_not_none('An SWF domain must be specified by the activity worker '
+                                                          'constructor or the activity function', swf_domain,
+                                                          decision_function.swf_options['domain'])
+            self._swf_task_list = self.choose_first_not_none('An SWF task list must be specified by the activity '
+                                                             'worker constructor or the activity function',
+                                                             swf_task_list, decision_function.swf_options['task_list'])
+            self._wf_type = self.choose_first_not_none('An SWF activity type must be specified by the activity '
+                                                             'worker constructor or the activity function',
+                                                             workflow_type, decision_function.swf_options['wf_type'])
+            self._wf_version = self.choose_first_not_none('An SWF activity version must be specified by the '
+                                                                'activity worker constructor or the activity function',
+                                                                workflow_version, decision_function.swf_options[
+                                                                    'wf_version'])
+
+            self._input_serializer = decision_function.serialization_options['input_serializer']
+            self._input_data_store = decision_function.serialization_options['input_data_store']
+            self._result_serializer = decision_function.serialization_options['result_serializer']
+            self._result_data_store = decision_function.serialization_options['result_data_store']
         else:
-            raise Exception('Mode {} is not valid'.format(mode))
-        # Give preference to the values in the constructor
-        self._swf_domain = swf_domain
-        self._swf_task_list = swf_task_list
-
-        # Default to values in the Meta class
-        if self._swf_domain is None:
-            self._swf_domain = getattr(self.Meta, 'swf_domain')
-        if self._swf_task_list is None:
-            self._swf_task_list = getattr(self.Meta, 'swf_task_list')
-
-        # Make sure these values got set somehow
-        if self._swf_domain is None:
-            raise Exception('swf_domain must be set in either the constructor or the Meta class when running in '
-                            'distributed mode.')
-        if self._swf_task_list is None:
-            raise Exception('swf_task_list must be set in either the constructor or the Meta class when running '
-                            'in distributed mode.')
+            raise Exception('Activity function has no "swf_options" attribute; are you sure the function was properly '
+                            'decorated?')
 
     def handle_no_op(self, decision_task):
         """
@@ -87,7 +90,7 @@ class DecisionWorker:
         """
         pass
 
-    def handle_exception(self, exception):
+    def handle_exception(self, exception, decision_context):
         """
         Handles exceptions from the event loop.
 
@@ -97,21 +100,11 @@ class DecisionWorker:
         :return: True if we want to exit, False otherwise
         """
         self.logger.exception('Exception caught while running the event loop.')
-        SwfDecisionContext.decisions.fail_workflow_execution(reason='Decider exception', details=exception.message[:3000])
+        # Reset the decisions that we want to make; we can't schedule new activities and fail a workflow in the same
+        # call
+        decision_context.decisions = Layer1Decisions()
+        decision_context.decisions.fail_workflow_execution(reason='Decider exception', details=exception.message[:3000])
         return False
-
-    def handle(self, **kwargs):
-        """
-        This method handles each decision task
-
-        Call this method directly in order to handle decisions in one of the non-distributed modes.
-
-        NOTE:  It only accepts keyword arguments.  NO POSITIONAL ARGS.
-        :param args:
-        :param kwargs:
-        :return:
-        """
-        raise NotImplementedError('Handler method must exist')
 
     def start(self):
         """
@@ -123,7 +116,6 @@ class DecisionWorker:
         """
 
         while True:
-            SwfDecisionContext.mode = SwfDecisionContext.Distributed
             self.logger.debug('Polling')
 
             try:
@@ -150,109 +142,70 @@ class DecisionWorker:
 
                     decision_task['events'] = list()
                     next_page_token = additional_history.get('nextPageToken')
-            except Exception:
+            except Exception as e:
                 self.logger.exception('Exception while polling for a task and/or history')
-                return
+                raise e
 
-            # Populate the context and make sure its' in teh right mode
+            # Populate the context
             try:
-                self._populate_decision_context(decision_task, history)
+                decision_context = self._populate_decision_context(decision_task, history)
+
+                # Here's where we make the context available to the decorated function
+                self._scanner.decision_context = decision_context
             except Exception as e:
                 self.logger.exception('Exception while parsing a workflow history')
                 message = str(e)
                 if message:
                     message = message[:3000]
-                SwfDecisionContext.decisions.fail_workflow_execution(reason='Failed to parse workflow history',
+                decision_context.decisions.fail_workflow_execution(reason='Failed to parse workflow history',
                                                                      details=message)
                 self._swf.respond_decision_task_completed(decision_task['taskToken'],
-                                                              SwfDecisionContext.decisions._data)
+                                                              decision_context.decisions._data)
                 return
 
             # get the args and run the handle function in a thread
             args = (list(), dict())
-            if SwfDecisionContext.workflow.input:
+            if decision_context.workflow.input:
                 self.logger.debug('Unpacking input arguments')
-                serialized_args = self.Meta.input_data_store.get(SwfDecisionContext.workflow.input)
-                args = self.Meta.input_serializer.deserialize_input(serialized_args)
+                serialized_args = self._input_data_store.get(decision_context.workflow.input)
+                args = self._input_serializer.deserialize_input(serialized_args)
 
             try:
-                result = self.handle(*args[0], **args[1])
-                SwfDecisionContext.finished = True
-                SwfDecisionContext.output = result
+                finished = False
+                result = self._decision_function(*args[0], **args[1])
+                finished = True
             except SystemExit:
-                SwfDecisionContext.finished = False
+                finished = False
             except Exception as e:
                 self.logger.debug('Calling the exception handler')
-                should_exit = self.handle_exception(e)
+                should_exit = self.handle_exception(e, decision_context)
                 if should_exit:
                     self.logger.debug('Exiting due to return value from handle_exception()')
                     return
 
             # Is our workflow finished?
-            if SwfDecisionContext.finished is True:
+            if finished is True:
                 swf_result = None
                 if result:
                     self.logger.debug('Packing workflow results')
-                    serialized_result = self.Meta.result_serializer.serialize_result(result)
-                    key = '{}-result'.format(SwfDecisionContext.workflow.run_id)
-                    swf_result = self.Meta.result_data_store.put(serialized_result, key)
-                SwfDecisionContext.decisions.complete_workflow_execution(result=swf_result)
+                    serialized_result = self._result_serializer.serialize_result(result)
+                    key = '{}-result'.format(decision_context.workflow.run_id)
+                    swf_result = self._result_data_store.put(serialized_result, key)
+                decision_context.decisions.complete_workflow_execution(result=swf_result)
 
             self.logger.debug('Returning decisions to SWF.')
             try:
                 self._swf.respond_decision_task_completed(decision_task['taskToken'],
-                                                          SwfDecisionContext.decisions._data)
+                                                          decision_context.decisions._data)
             except Exception:
                 self.logger.exception('Error when responding with decision tasks')
 
     @staticmethod
-    def nondeterministic(f):
-        """
-        Decorator for wrapping non-deterministic methods so that they aren't called more than once
-
-        This is an alias for @cached
-        :param f:
-        :return:
-        """
-        return DecisionWorker.cached(f)
-
-    @staticmethod
-    def cached(f):
-        """
-        Decorator for wrapping methods that we only want to call once and cache
-
-        This is useful for saving the results of an expensive or nondeterministic operation.  Using cached values may
-        help speed-up replay.
-
-        Currently, this defaults to using the result serializer and data store.
-        :param f:
-        :return:
-        """
-
-        def wrapper(self, *args, **kwargs):
-            if SwfDecisionContext.mode == SwfDecisionContext.Distributed:
-                try:
-                    cached_result = SwfDecisionContext.cache_markers_iter.next()
-                    result = None
-                    if cached_result.details:
-                        serialized_result = self.Meta.result_data_store.get(cached_result.details)
-                        result = self.Meta.result_serializer.deserialize_result(serialized_result)
-                    return result
-                except StopIteration:
-                    # If we're here, then this guy hasn't been called before.  Call it and cache the output.
-                    result = f(self, *args, **kwargs)
-                    details = None
-                    if result:
-                        serialized_result = self.Meta.result_serializer.serialize_result(result)
-                        key = '{}-{}'.format(SwfDecisionContext.workflow.run_id, str(uuid.uuid4()))
-                        details = self.Meta.result_data_store.put(serialized_result, key)
-                    marker_details = self.Meta.result_data_store.put(details, str(uuid.uuid4()))
-                    SwfDecisionContext.decisions.record_marker('cache', marker_details)
-                    return result
-            else:
-                return f(self, *args, **kwargs)
-
-        return wrapper
+    def choose_first_not_none(exception_message, *args):
+        for arg in args:
+            if arg is not None:
+                return arg
+        raise Exception(exception_message)
 
     @staticmethod
     def _populate_decision_context(decision_task, history):
@@ -455,9 +408,7 @@ class DecisionWorker:
                     marker = Marker(name=marker_name, details=details)
                     cache_markers.append(marker)
 
-        # Reset the context
-        SwfDecisionContext.reset()
-        SwfDecisionContext.decisions = Layer1Decisions()
+        swf_decision_context = SwfDecisionContext()
 
         # Handle task retry statuses
         activities_with_retries = OrderedDict(activities)
@@ -479,17 +430,28 @@ class DecisionWorker:
             del activities_with_retries[id_to_delete]
 
         # Put this stuff into the context
-        SwfDecisionContext.activities = activities
-        SwfDecisionContext.activities_iter = iter(activities_with_retries.itervalues())
-        SwfDecisionContext.child_workflows = child_workflows
-        SwfDecisionContext.child_workflows_iter = iter(child_workflows)
-        SwfDecisionContext.decision_task = decision_task
-        SwfDecisionContext.signals = signals
-        SwfDecisionContext.signals_iter = iter(signals)
-        SwfDecisionContext.timers = timers
-        SwfDecisionContext.timers_iter = iter(timers.itervalues())
-        SwfDecisionContext.swf_history = history
-        SwfDecisionContext.cache_markers = cache_markers
-        SwfDecisionContext.cache_markers_iter = iter(cache_markers)
-        SwfDecisionContext.workflow = workflow
+        swf_decision_context.activities = activities
+        swf_decision_context.activities_iter = iter(activities_with_retries.itervalues())
+        swf_decision_context.child_workflows = child_workflows
+        swf_decision_context.child_workflows_iter = iter(child_workflows)
+        swf_decision_context.decision_task = decision_task
+        swf_decision_context.signals = signals
+        swf_decision_context.signals_iter = iter(signals)
+        swf_decision_context.timers = timers
+        swf_decision_context.timers_iter = iter(timers.itervalues())
+        swf_decision_context.swf_history = history
+        swf_decision_context.cache_markers = cache_markers
+        swf_decision_context.cache_markers_iter = iter(cache_markers)
+        swf_decision_context.workflow = workflow
 
+        return swf_decision_context
+
+class Registry(object):
+
+    __slots__ = ['registered']
+
+    def __init__(self):
+        self.registered = dict()
+
+    def add(self, orig_func, modified_func):
+        self.registered[orig_func] = modified_func

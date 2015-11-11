@@ -3,15 +3,19 @@ import logging
 import venusian
 import sys
 
+from pyswfaws import decorators
+
 
 class DistributedActivityWorker(object):
     """
-    This class is the base of all activity workers.  It is responsible for the event loop, message serialization, and
-    message storage.  Users are expected to extend this class and to provide an implementation of handle_task to carry
-    out their work.
+    This class is the base of all distributed activity workers.
+
+    In order to run an activity task in distributed mode, users must take this class (or a sub class) and instantiate
+    it with an activity function and any last-minute configs.  The user should then call `start`, which will begin an
+     infinite loop that listens for and acts on activity tasks from SWF.
     """
 
-    logger = logging.getLogger('pyswfaws.ActivityWorker')
+    logger = logging.getLogger(__name__)
 
     def __init__(self, activity_function, swf_domain=None, swf_task_list=None, activity_type=None,
                  activity_version=None, aws_access_key_id=None, aws_secret_access_key=None):
@@ -40,7 +44,7 @@ class DistributedActivityWorker(object):
         scanner = venusian.Scanner(registry=registry, mode='remote', caller='activity_worker')
 
         # Some trickery here -- scan the module that the activity worker method is found in
-        scanner.scan(sys.modules[activity_function.__module__], categories=('pyswfaws.activity_task', ))
+        scanner.scan(sys.modules[activity_function.orig.__module__], categories=('pyswfaws.activity_task', ))
 
         if hasattr(self._activity_function, 'swf_options'):
 
@@ -53,7 +57,7 @@ class DistributedActivityWorker(object):
                                                              swf_task_list, activity_function.swf_options['task_list'])
             self._activity_type = self.choose_first_not_none('An SWF activity type must be specified by the activity '
                                                              'worker constructor or the activity function',
-                                                             swf_task_list, activity_function.swf_options['task_type'])
+                                                             activity_type, activity_function.swf_options['task_type'])
             self._activity_version = self.choose_first_not_none('An SWF activity version must be specified by the '
                                                                 'activity worker constructor or the activity function',
                                                                 activity_version, activity_function.swf_options[
@@ -73,6 +77,22 @@ class DistributedActivityWorker(object):
         :return:
         """
         pass
+
+    def handle_exception(self, exception, activity_task):
+        """
+        Handles exceptions from the event loop.
+
+        The default behavior is to log it, fail the task, and continue.  This method only gets used when in
+        distributed mode.
+        :param exception:
+        :return: True if we want to exit, False otherwise
+        """
+        self.logger.exception('Exception caught while running the event loop.')
+        # Reset the decisions that we want to make; we can't schedule new activities and fail a workflow in the same
+        # call
+        self._swf.respond_activity_task_failed(activity_task['taskToken'], reason='Activity exception',
+                                               details=exception.message[:3000])
+        return False
 
     def start(self):
         """
@@ -100,12 +120,12 @@ class DistributedActivityWorker(object):
                 self.logger.debug("Calling the user's handler")
 
                 # In this case, result will be a promise.  Be sure to treat it as such.
-                result = self._activity_functionc(*input[0], **input[1])
+                result = self._activity_function(*input[0], **input[1])
 
                 swf_result = None
-                if result.result:
+                if result:
                     self.logger.debug('Serializing activity result')
-                    serialized_result = self._result_serializer.serialize_result(result.result)
+                    serialized_result = self._result_serializer.serialize_result(result)
                     key = '{}-{}'.format(activity_task['workflowExecution']['runId'], activity_task['activityId'])
                     swf_result = self._result_data_store.put(serialized_result, key)
 
