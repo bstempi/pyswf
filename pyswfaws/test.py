@@ -5,6 +5,7 @@ from serializers import *
 from decorators import *
 from activityworker import *
 from decisionworker import *
+from promise import Timer as PTimer
 
 import unittest
 import time
@@ -12,12 +13,28 @@ import time
 import boto
 
 
+# Because logging
+logging.basicConfig(level=logging.DEBUG)
+
+
 @decision_task(swf_domain='example', swf_workflow_type='TestWorkflow', swf_workflow_version='1.0',
-               swf_task_list='unit_test',
+               swf_task_list='unit_test_a',
                input_data_store=SwfDataStore(), input_data_serializer=JsonSerializer(),
                result_data_store=SwfDataStore(), result_data_serializer=JsonSerializer())
 def decider_a():
     a = activity_task_a(5)
+    b = activity_task_b(10)
+    return a.result + b.result
+
+@decision_task(swf_domain='example', swf_workflow_type='TestWorkflow', swf_workflow_version='1.0',
+               swf_task_list='unit_test_b',
+               input_data_store=SwfDataStore(), input_data_serializer=JsonSerializer(),
+               result_data_store=SwfDataStore(), result_data_serializer=JsonSerializer())
+def decider_b():
+    a = activity_task_a(5)
+    timer = PTimer.get(seconds=10)
+    # Force WF to wait for the timer
+    timer.result
     b = activity_task_b(10)
     return a.result + b.result
 
@@ -49,6 +66,11 @@ class LiveSwfWorkflowTest(unittest.TestCase):
         decision_task_a_runner.start()
 
     @staticmethod
+    def start_decisioner_b():
+        decision_task_b_runner = DistributedDecisionWorker(decider_b)
+        decision_task_b_runner.start()
+
+    @staticmethod
     def start_activity_worker_a():
         activity_task_a_runner = DistributedActivityWorker(activity_task_a)
         activity_task_a_runner.start()
@@ -65,10 +87,12 @@ class LiveSwfWorkflowTest(unittest.TestCase):
         LiveSwfWorkflowTest.activity_task_a_process = Process(target=LiveSwfWorkflowTest.start_activity_worker_a)
         LiveSwfWorkflowTest.activity_task_b_process = Process(target=LiveSwfWorkflowTest.start_activity_worker_b)
         LiveSwfWorkflowTest.decision_task_a_process = Process(target=LiveSwfWorkflowTest.start_decisioner_a)
+        LiveSwfWorkflowTest.decision_task_b_process = Process(target=LiveSwfWorkflowTest.start_decisioner_b)
 
         LiveSwfWorkflowTest.activity_task_a_process.start()
         LiveSwfWorkflowTest.activity_task_b_process.start()
         LiveSwfWorkflowTest.decision_task_a_process.start()
+        LiveSwfWorkflowTest.decision_task_b_process.start()
         time.sleep(10)
 
     @classmethod
@@ -76,19 +100,58 @@ class LiveSwfWorkflowTest(unittest.TestCase):
         LiveSwfWorkflowTest.activity_task_a_process.terminate()
         LiveSwfWorkflowTest.activity_task_b_process.terminate()
         LiveSwfWorkflowTest.decision_task_a_process.terminate()
+        LiveSwfWorkflowTest.decision_task_b_process.terminate()
 
     def test_simple_workflow(self):
         # TODO Test output of workflow, not just the status
-        wf_result = LiveSwfWorkflowTest.swf.start_workflow_execution(domain='example', workflow_id='unit_test',
+        wf_result = LiveSwfWorkflowTest.swf.start_workflow_execution(domain='example', workflow_id='unit_test_a',
                                                                      workflow_name='TestWorkflow',
                                                                      workflow_version='1.0',
-                                                                     task_list='unit_test')
+                                                                     task_list='unit_test_a')
         if wf_result:
             run_id = wf_result['runId']
             while True:
                 time.sleep(5)
                 wf_result = LiveSwfWorkflowTest.swf.describe_workflow_execution(domain='example', run_id=run_id,
-                                                                                workflow_id='unit_test')
+                                                                                workflow_id='unit_test_a')
+                if wf_result['executionInfo'].get('closeStatus') is not None:
+                    break
+            if wf_result['executionInfo'].get('closeStatus') != 'COMPLETED':
+                self.fail('Workflow {} failed'.format(wf_result['executionInfo']['execution']['runId']))
+        else:
+            self.fail('Error when launching workflow')
+
+    def test_workflow_with_timer(self):
+        # TODO Test output of workflow, not just the status
+        wf_result = LiveSwfWorkflowTest.swf.start_workflow_execution(domain='example', workflow_id='unit_test_b',
+                                                                     workflow_name='TestWorkflow',
+                                                                     workflow_version='1.0',
+                                                                     task_list='unit_test_b')
+        if wf_result:
+            run_id = wf_result['runId']
+            while True:
+                time.sleep(5)
+                wf_result = LiveSwfWorkflowTest.swf.describe_workflow_execution(domain='example', run_id=run_id,
+                                                                                workflow_id='unit_test_b')
+                if wf_result['executionInfo'].get('closeStatus') is not None:
+                    break
+            if wf_result['executionInfo'].get('closeStatus') != 'COMPLETED':
+                self.fail('Workflow {} failed'.format(wf_result['executionInfo']['execution']['runId']))
+        else:
+            self.fail('Error when launching workflow')
+
+    def test_workflow_with_cwf(self):
+        # TODO Test output of workflow, not just the status
+        wf_result = LiveSwfWorkflowTest.swf.start_workflow_execution(domain='example', workflow_id='unit_test_b',
+                                                                     workflow_name='TestWorkflow',
+                                                                     workflow_version='1.0',
+                                                                     task_list='unit_test_b')
+        if wf_result:
+            run_id = wf_result['runId']
+            while True:
+                time.sleep(5)
+                wf_result = LiveSwfWorkflowTest.swf.describe_workflow_execution(domain='example', run_id=run_id,
+                                                                                workflow_id='unit_test_b')
                 if wf_result['executionInfo'].get('closeStatus') is not None:
                     break
             if wf_result['executionInfo'].get('closeStatus') != 'COMPLETED':

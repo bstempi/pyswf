@@ -121,7 +121,11 @@ class DistributedChildWorkflowPromise(Promise):
 class Timer(Promise):
     """
     Defines a Timer in SWF
+
+    This class is a factory that creates times for workflows.  This class is not meant to be instantiated.
     """
+
+    __slots__ = ['is_remote_mode', 'decision_context']
 
     class SwfTimer(Promise):
         """
@@ -132,10 +136,10 @@ class Timer(Promise):
 
             # Try to get a timer from the timer iterator.  If none exists, make a new timer
             try:
-                timer = SwfDecisionContext.timers_iter.next()
+                timer = Timer.decision_context.timers_iter.next()
                 self.is_ready = timer.state == 'COMPLETED'
             except StopIteration:
-                SwfDecisionContext.decisions.start_timer(seconds, SwfDecisionContext.get_next_id())
+                Timer.decision_context.decisions.start_timer(str(seconds), Timer.decision_context.get_next_id())
 
         @property
         def result(self):
@@ -171,10 +175,7 @@ class Timer(Promise):
         :param seconds:
         :return:
         """
-        mode = SwfDecisionContext.mode
-        if mode == SwfDecisionContext.Distributed:
+        if Timer.is_remote_mode:
             return Timer.SwfTimer(seconds)
-        elif mode == SwfDecisionContext.SerialLocal:
-            return Timer.LocalTimer(seconds)
         else:
-            raise Exception('SwfDecisionContext mode {} not recognized'.format(mode))
+            return Timer.LocalTimer(seconds)

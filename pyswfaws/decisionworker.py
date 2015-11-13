@@ -17,6 +17,7 @@ from models import *
 from serializers import *
 from datastores import *
 from promise import *
+from promise import Timer as PTimer
 
 
 class DistributedDecisionWorker:
@@ -55,6 +56,9 @@ class DistributedDecisionWorker:
         # Some trickery here -- scan the module that the activity worker method is found in
         self._scanner.scan(sys.modules[decision_function.orig.__module__], categories=('pyswfaws.activity_task',
                                                                                        'pyswfaws.decision_task'))
+
+        # More trickery -- make sure that timers know that we're in a remote mode
+        PTimer.is_remote_mode = True
 
         if hasattr(self._decision_function, 'swf_options'):
 
@@ -152,11 +156,15 @@ class DistributedDecisionWorker:
 
                 # Here's where we make the context available to the decorated function
                 self._scanner.decision_context = decision_context
+
+                # Make sure that timers get them, too
+                PTimer.decision_context = decision_context
             except Exception as e:
                 self.logger.exception('Exception while parsing a workflow history')
                 message = str(e)
                 if message:
                     message = message[:3000]
+                decision_context.decisions = Layer1Decisions()
                 decision_context.decisions.fail_workflow_execution(reason='Failed to parse workflow history',
                                                                      details=message)
                 self._swf.respond_decision_task_completed(decision_task['taskToken'],
@@ -222,6 +230,7 @@ class DistributedDecisionWorker:
         child_workflows = OrderedDict()
         workflow = Workflow()
         cache_markers = list()
+        id_count = 1
 
         workflow.run_id = decision_task['workflowExecution']['runId']
 
@@ -271,6 +280,7 @@ class DistributedDecisionWorker:
             # Activity task related events
             elif et == 'ActivityTaskScheduled':
                 activity_task = Activity()
+                id_count += 1
                 activity_task.id = e['activityTaskScheduledEventAttributes']['activityId']
                 activity_task.type = e['activityTaskScheduledEventAttributes']['activityType']['name']
                 activity_task.version = e['activityTaskScheduledEventAttributes']['activityType']['version']
@@ -327,10 +337,11 @@ class DistributedDecisionWorker:
             # timer related events
             elif et == 'TimerStarted':
                 timer = Timer()
+                id_count += 1
                 timer.id = e['timerStartedEventAttributes']['timerId']
                 timer.control = e['timerStartedEventAttributes'].get('control')
                 timer.state = 'STARTED'
-                timer[timer.id] = timer
+                timers[timer.id] = timer
             elif et == 'StartTimerFailed':
                 id = e['startTimerFailedEventAttributes']['timerId']
                 timers[id].state = 'FAILED'
@@ -385,6 +396,7 @@ class DistributedDecisionWorker:
                 child_workflow.failure_cause = e['startChildWorkflowExecutionFailedEventAttributes']['cause']
             elif et == 'StartChildWorkflowExecutionInitiated':
                 child_workflow = Workflow()
+                id_count += 1
                 child_workflows[activity_task.id] = child_workflow
                 child_workflow.child_policy = e['startChildWorkflowExecutionInitiatedEventAttributes'].get('childPolicty')
                 child_workflow.control = e['startChildWorkflowExecutionInitiatedEventAttributes'].get('control')
@@ -443,6 +455,7 @@ class DistributedDecisionWorker:
         swf_decision_context.cache_markers = cache_markers
         swf_decision_context.cache_markers_iter = iter(cache_markers)
         swf_decision_context.workflow = workflow
+        swf_decision_context._id_generator = id_count
 
         return swf_decision_context
 
