@@ -261,9 +261,11 @@ def decision_task(swf_domain=None, swf_workflow_type=None, swf_workflow_version=
                     task_id = decision_context.get_next_id()
                     key = '{}-cwf-{}'.format(swf_workflow_type, task_id)
                     swf_input = input_data_store.put(serialized_input, key)
+                    workflow_id = 'wf-{}'.format(uuid.uuid4())
                     decision_context.decisions.start_child_workflow_execution(workflow_type_name=swf_workflow_type,
                                                                               workflow_type_version=swf_workflow_version,
-                                                                              input=swf_input, task_list=swf_task_list)
+                                                                              input=swf_input, task_list=swf_task_list,
+                                                                              workflow_id=workflow_id)
                     cwf = Workflow(state='SCHEDULED')
                     return DistributedChildWorkflowPromise(cwf)
 

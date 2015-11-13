@@ -357,21 +357,21 @@ class DistributedDecisionWorker:
 
             # child workflow stuffs
             elif et == 'ChildWorkflowExecutionCanceled':
-                id = e['childWorkflowExecutionCanceledEventAttributes']['initiatedEventId']
+                id = e['childWorkflowExecutionCanceledEventAttributes']['workflowExecution']['workflowId']
                 child_workflow = child_workflows[id]
                 child_workflow.state = 'CANCELED'
             elif et == 'ChildWorkflowExecutionCompleted':
-                id = e['childWorkflowExecutionCompletedEventAttributes']['initiatedEventId']
+                id = e['childWorkflowExecutionCompletedEventAttributes']['workflowExecution']['workflowId']
                 child_workflow = child_workflows[id]
                 child_workflow.state = 'COMPLETED'
             elif et == 'ChildWorkflowExecutionFailed':
-                id = e['childWorkflowExecutionFailedEventAttributes']['initiatedEventId']
+                id = e['childWorkflowExecutionFailedEventAttributes']['workflowExecution']['workflowId']
                 child_workflow = child_workflows[id]
                 child_workflow.state = 'FAILED'
                 child_workflow.failure_details = e['childWorkflowExecutionFailedEventAttributes']['details']
                 child_workflow.failure_reason = e['childWorkflowExecutionFailedEventAttributes']['reason']
             elif et == 'ChildWorkflowExecutionStarted':
-                id = e['childWorkflowExecutionStartedEventAttributes']['initiatedEventId']
+                id = e['childWorkflowExecutionStartedEventAttributes']['workflowExecution']['workflowId']
                 child_workflow = child_workflows[id]
                 child_workflow.continued_execution_run_id = e['childWorkflowExecutionStartedEventAttributes'].get(
                     'continuedExecutionRunId')
@@ -381,23 +381,23 @@ class DistributedDecisionWorker:
                     child_workflow.parent_run_id = e['childWorkflowExecutionStartedEventAttributes']['parentWorkflowExecution']['runId']
                 child_workflow.run_id = e['childWorkflowExecutionStartedEventAttributes']['workflowExecution']['runId']
                 child_workflow.state = 'STARTED'
-                child_workflows[child_workflow.run_id] = child_workflow
             elif et == 'ChildWorkflowExecutionTerminated':
-                id = e['childWorkflowExecutionTerminatedEventAttributes']['initiatedEventId']
+                id = e['childWorkflowExecutionTerminatedEventAttributes']['workflowExecution']['workflowId']
                 child_workflow = child_workflows[id]
                 child_workflow.state = 'TERMINATED'
             elif et == 'ChildWorkflowExecutionTimedOutEvent':
-                id = e['childWorkflowExecutionTerminatedEventAttributes']['initiatedEventId']
+                id = e['childWorkflowExecutionTerminatedEventAttributes']['workflowExecution']['workflowId']
                 child_workflow = child_workflows[id]
                 child_workflow.state = 'TIMED_OUT'
             elif et == 'StartChildWorkflowExecutionFailed':
-                id = e['startChildWorkflowExecutionFailedEventAttributes']['initiatedEventId']
+                id = e['startChildWorkflowExecutionFailedEventAttributes']['workflowExecution']['workflowId']
                 child_workflow = child_workflows[id]
                 child_workflow.failure_cause = e['startChildWorkflowExecutionFailedEventAttributes']['cause']
             elif et == 'StartChildWorkflowExecutionInitiated':
                 child_workflow = Workflow()
-                id_count += 1
-                child_workflows[activity_task.id] = child_workflow
+                id = e['startChildWorkflowExecutionInitiatedEventAttributes']['workflowId']
+                child_workflows[id] = child_workflow
+                child_workflow.workflow_id = id
                 child_workflow.child_policy = e['startChildWorkflowExecutionInitiatedEventAttributes'].get('childPolicty')
                 child_workflow.control = e['startChildWorkflowExecutionInitiatedEventAttributes'].get('control')
                 child_workflow.execution_start_to_close_timeout = e['startChildWorkflowExecutionInitiatedEventAttributes'].get(
@@ -405,7 +405,7 @@ class DistributedDecisionWorker:
                 child_workflow.input = e['startChildWorkflowExecutionInitiatedEventAttributes'].get('input')
                 child_workflow.lambda_role = e['startChildWorkflowExecutionInitiatedEventAttributes'].get('lambdaRole')
                 child_workflow.tag_list = e['startChildWorkflowExecutionInitiatedEventAttributes'].get('tagList')
-                child_workflow.task_list_name = e['startChildWorkflowExecutionInitiatedEventAttributes'].get('taskList')
+                child_workflow.task_list = e['startChildWorkflowExecutionInitiatedEventAttributes'].get('taskList')
                 child_workflow.task_priority = e['startChildWorkflowExecutionInitiatedEventAttributes'].get('taskPriority')
                 child_workflow.type = e['startChildWorkflowExecutionInitiatedEventAttributes']['workflowType']['name']
                 child_workflow.version = e['startChildWorkflowExecutionInitiatedEventAttributes']['workflowType']['version']
@@ -445,7 +445,7 @@ class DistributedDecisionWorker:
         swf_decision_context.activities = activities
         swf_decision_context.activities_iter = iter(activities_with_retries.itervalues())
         swf_decision_context.child_workflows = child_workflows
-        swf_decision_context.child_workflows_iter = iter(child_workflows)
+        swf_decision_context.child_workflows_iter = iter(child_workflows.itervalues())
         swf_decision_context.decision_task = decision_task
         swf_decision_context.signals = signals
         swf_decision_context.signals_iter = iter(signals)
