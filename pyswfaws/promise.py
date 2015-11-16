@@ -1,4 +1,4 @@
-from dateutil import relativedelta
+from dateutil.relativedelta import *
 
 from models import SwfDecisionContext
 from serializers import JsonSerializer
@@ -17,9 +17,13 @@ class Promise(object):
 
     For an explanation of a promise, see https://en.wikipedia.org/wiki/Futures_and_promises
     """
-    is_ready = False
-    exception = None
-    result = None
+
+    __slots__ = ['is_ready', 'exception', '_result']
+
+    def __init__(self):
+        self.is_ready = False
+        self.exception = None
+        self._result = None
 
     @property
     def result(self):
@@ -27,7 +31,11 @@ class Promise(object):
             raise self.exception
         if not self.is_ready:
             raise Exception('Promise is not ready yet!')
-        return self.result
+        return self._result
+
+    @result.setter
+    def result(self, val):
+        self._result = val
 
 
 class DistributedActivityPromise(Promise):
@@ -154,18 +162,18 @@ class Timer(Promise):
         """
 
         def __init__(self, seconds):
-            now = datetime.datetime.now(pytz.utc)
+            now = datetime.datetime.now()
             self._fire_datetime = now + relativedelta(seconds=+seconds)
 
         @property
         def is_ready(self):
-            if self._fire_datetime >= datetime.datetime.now(pytz.utc):
+            if self._fire_datetime <= datetime.datetime.now():
                 return True
             return False
 
         @property
         def result(self):
-            while not self.is_ready():
+            while not self.is_ready:
                 time.sleep(1)
 
     @staticmethod

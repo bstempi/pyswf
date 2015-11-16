@@ -57,11 +57,10 @@ def activity_task(swf_domain=None, swf_task_type=None, swf_task_version=None, sw
                 p = Promise()
                 p.is_ready = True
                 try:
-                    result = f(*args, **kwargs)
-                    p.result = result
+                    p.result = f(*args, **kwargs)
                 except Exception as e:
                     p.exception = e
-                return e
+                return p
 
             def decider_remote_activity_task(*args, **kwargs):
                 """

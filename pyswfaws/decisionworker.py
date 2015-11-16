@@ -459,6 +459,32 @@ class DistributedDecisionWorker:
 
         return swf_decision_context
 
+
+class LocalDecisionWorker(object):
+    """
+    This class is the base of all locally run decision workers.
+    """
+
+    logger = logging.getLogger(__name__)
+
+    def __init__(self, decision_function):
+        self._decision_function = decision_function
+
+        registry = Registry()
+        self._scanner = venusian.Scanner(registry=registry, mode='local', caller='decision_worker')
+        self._scanner.parent_decision_worker = decision_function
+
+        # Some trickery here -- scan the module that the activity worker method is found in
+        self._scanner.scan(sys.modules[decision_function.orig.__module__], categories=('pyswfaws.activity_task',
+                                                                                       'pyswfaws.decision_task'))
+
+        # More trickery -- make sure that timers know that we're in a remote mode
+        PTimer.is_remote_mode = False
+
+    def start(self, *args, **kwargs):
+        return self._decision_function(*args, **kwargs)
+
+
 class Registry(object):
 
     __slots__ = ['registered']

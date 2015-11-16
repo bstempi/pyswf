@@ -9,6 +9,7 @@ from promise import Timer as PTimer
 
 import unittest
 import time
+import timeit
 
 import boto
 
@@ -224,3 +225,25 @@ class LiveSwfWorkflowTest(unittest.TestCase):
                 self.fail('Workflow {} failed'.format(wf_result['executionInfo']['execution']['runId']))
         else:
             self.fail('Error when launching workflow')
+
+
+class LocalWorkflowTest(unittest.TestCase):
+
+    def test_simple_workflow(self):
+        decider = LocalDecisionWorker(decision_function=decider_a)
+        result = decider.start()
+        self.assertEquals(45, result)
+
+    def test_workflow_with_timer(self):
+        decider = LocalDecisionWorker(decision_function=decider_b)
+        start_time = time.time()
+        decider.start()
+        end_time = time.time()
+        self.assertAlmostEqual(end_time-start_time, 10, delta=2)
+
+
+    def test_workflow_with_cwf(self):
+        pass
+
+    def test_workflow_with_cache(self):
+        pass
