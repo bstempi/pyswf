@@ -358,15 +358,6 @@ def cached(result_data_store, result_data_serializer):
                     # Give the result back to the caller
                     return result
 
-            def cache_result_locally(*args, **kwargs):
-
-                # Put it in the map if it's not already there
-                if caller not in saved_results:
-                    result = f(*args, **kwargs)
-                    saved_results[caller] = result
-
-                return saved_results[caller]
-
             # Get the mode, defaulting to local mode.
             mode = getattr(scanner, 'mode', 'local')
             caller = getattr(scanner, 'caller', None)
@@ -374,9 +365,6 @@ def cached(result_data_store, result_data_serializer):
             if mode == 'remote' and caller == 'decision_worker':
                 scanner.registry.add(ob, cache_result_in_marker)
                 ob.decorated = cache_result_in_marker
-            else:
-                scanner.registry.add(ob, cache_result_locally)
-                ob.decorated = cache_result_locally
 
         wrapped_f = DynamicCallableFunction(f)
         venusian.attach(wrapped_f, callback, category='pyswfaws.decision_task')

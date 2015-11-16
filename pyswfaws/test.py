@@ -244,6 +244,3 @@ class LocalWorkflowTest(unittest.TestCase):
 
     def test_workflow_with_cwf(self):
         pass
-
-    def test_workflow_with_cache(self):
-        pass
