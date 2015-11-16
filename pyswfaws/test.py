@@ -48,8 +48,7 @@ def decider_b():
 def decider_c():
     a = activity_task_a(5)
     child_workflow = decider_a()
-    child_workflow.result
-    return a.result
+    return a.result + child_workflow.result
 
 
 @decision_task(swf_domain='example', swf_workflow_type='TestWorkflow', swf_workflow_version='1.0',
@@ -241,6 +240,7 @@ class LocalWorkflowTest(unittest.TestCase):
         end_time = time.time()
         self.assertAlmostEqual(end_time-start_time, 10, delta=2)
 
-
     def test_workflow_with_cwf(self):
-        pass
+        decider = LocalDecisionWorker(decision_function=decider_c)
+        result = decider.start()
+        self.assertEquals(70, result)

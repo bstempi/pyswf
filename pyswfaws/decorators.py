@@ -221,7 +221,7 @@ def decision_task(swf_domain=None, swf_workflow_type=None, swf_workflow_version=
                     p.result = result
                 except Exception as e:
                     p.exception = e
-                return e
+                return p
 
             def decider_remote_child_workflow(*args, **kwargs):
                 """
