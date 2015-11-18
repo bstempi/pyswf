@@ -16,7 +16,6 @@ from boto.swf.layer1_decisions import Layer1Decisions
 from models import *
 from serializers import *
 from datastores import *
-from promise import *
 from promise import Timer as PTimer
 
 
@@ -31,7 +30,7 @@ class DistributedDecisionWorker:
 
     logger = logging.getLogger(__name__)
 
-    def __init__(self, decision_function, swf_domain=None, swf_task_list=None, workflow_type=None,
+    def __init__(self, decision_function, decision_object=None, swf_domain=None, swf_task_list=None, workflow_type=None,
                  workflow_version=None, aws_access_key_id=None, aws_secret_access_key=None):
         """
 
@@ -45,6 +44,7 @@ class DistributedDecisionWorker:
         :return:
         """
 
+        self._decision_object = decision_object
         self._swf = boto.connect_swf(aws_access_key_id=aws_access_key_id,
                                      aws_secret_access_key=aws_secret_access_key)
         self._decision_function = decision_function
@@ -177,6 +177,10 @@ class DistributedDecisionWorker:
                 self.logger.debug('Unpacking input arguments')
                 serialized_args = self._input_data_store.get(decision_context.workflow.input)
                 args = self._input_serializer.deserialize_input(serialized_args)
+
+            # Do we have a self that we need to pass in?
+            if self._decision_object:
+                args[0].insert(0, self._decision_object)
 
             try:
                 finished = False
@@ -364,6 +368,7 @@ class DistributedDecisionWorker:
                 id = e['childWorkflowExecutionCompletedEventAttributes']['workflowExecution']['workflowId']
                 child_workflow = child_workflows[id]
                 child_workflow.state = 'COMPLETED'
+                child_workflow.result = e['childWorkflowExecutionCompletedEventAttributes']['result']
             elif et == 'ChildWorkflowExecutionFailed':
                 id = e['childWorkflowExecutionFailedEventAttributes']['workflowExecution']['workflowId']
                 child_workflow = child_workflows[id]
@@ -467,7 +472,8 @@ class LocalDecisionWorker(object):
 
     logger = logging.getLogger(__name__)
 
-    def __init__(self, decision_function):
+    def __init__(self, decision_function, decision_object=None):
+        self._decision_object = decision_object
         self._decision_function = decision_function
 
         registry = Registry()
@@ -482,7 +488,11 @@ class LocalDecisionWorker(object):
         PTimer.is_remote_mode = False
 
     def start(self, *args, **kwargs):
-        return self._decision_function(*args, **kwargs)
+        # Do we have a 'self' to pass in?
+        if self._decision_object:
+            return self._decision_function(self._decision_object, *args, **kwargs)
+        else:
+            return self._decision_function(*args, **kwargs)
 
 
 class Registry(object):

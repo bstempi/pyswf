@@ -141,11 +141,12 @@ class Timer(Promise):
         """
 
         def __init__(self, seconds):
+            self.is_ready = False
 
             # Try to get a timer from the timer iterator.  If none exists, make a new timer
             try:
                 timer = Timer.decision_context.timers_iter.next()
-                self.is_ready = timer.state == 'COMPLETED'
+                self.is_ready = (timer.state == 'COMPLETED')
             except StopIteration:
                 Timer.decision_context.decisions.start_timer(str(seconds), Timer.decision_context.get_next_id())
 

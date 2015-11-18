@@ -17,7 +17,7 @@ class DistributedActivityWorker(object):
 
     logger = logging.getLogger(__name__)
 
-    def __init__(self, activity_function, swf_domain=None, swf_task_list=None, activity_type=None,
+    def __init__(self, activity_function, activity_object=None, swf_domain=None, swf_task_list=None, activity_type=None,
                  activity_version=None, aws_access_key_id=None, aws_secret_access_key=None):
         """
         Inits an activity worker
@@ -36,6 +36,7 @@ class DistributedActivityWorker(object):
         :return:
         """
 
+        self._activity_object = activity_object
         self._swf = boto.connect_swf(aws_access_key_id=aws_access_key_id,
                                      aws_secret_access_key=aws_secret_access_key)
         self._activity_function = activity_function
@@ -115,6 +116,10 @@ class DistributedActivityWorker(object):
                     self.logger.debug('Unpacking input message')
                     serialized_input = self._input_data_store.get(activity_task['input'])
                     input = self._input_serializer.deserialize_input(serialized_input)
+
+                # do we have a 'self' to pass in?
+                if self._activity_object:
+                    input[0].insert(0, self._activity_object)
 
                 # Let the user handle it
                 self.logger.debug("Calling the user's handler")
