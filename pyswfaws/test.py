@@ -290,7 +290,6 @@ class LocalWorkflowTest(unittest.TestCase):
         end_time = time.time()
         self.assertAlmostEqual(end_time-start_time, 10, delta=2)
 
-    @unittest.skip
     def test_workflow_with_cwf(self):
         decider = LocalDecisionWorker(decision_function=decider_c)
         result = decider.start()

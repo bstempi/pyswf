@@ -140,6 +140,9 @@ def activity_task(swf_domain=None, swf_task_type=None, swf_task_version=None, sw
             mode = getattr(scanner, 'mode', 'local')
             caller = getattr(scanner, 'caller', None)
 
+            # Just in case we're doing multiple scans per process, we need to make sure ob is properly reset.
+            ob.decorated = None
+
             if mode == 'local' and caller == 'decision_worker':
                 # We treat this as a serial call from the decider
                 scanner.registry.add(ob, decider_local_activity_task)
@@ -273,9 +276,11 @@ def decision_task(swf_domain=None, swf_workflow_type=None, swf_workflow_version=
             caller = getattr(scanner, 'caller', None)
             parent_decision_worker = getattr(scanner, 'parent_decision_worker', None)
 
+            # Just in case we're doing multiple scans per process, we need to make sure that ob is properly reset.
+            ob.decorated = None
+
             # IF this was called by a decision worker and this function isn't the decision task that's running the
             # workflow, then we have a child workflow
-            # TODO Revisit this; idk wtf
             if caller == 'decision_worker' and parent_decision_worker != ob:
                 if mode == 'remote':
                     scanner.registry.add(ob, decider_remote_child_workflow)
