@@ -64,7 +64,6 @@ def decider_d():
     return a.result + b.result + c + d + e
 
 
-
 class SomeDecider(object):
     @decision_task(swf_domain='example', swf_workflow_type='TestWorkflow', swf_workflow_version='1.0',
     swf_task_list='unit_test_e',
@@ -78,7 +77,7 @@ class SomeDecider(object):
 
 # TODO Currently unused; need to write a test for object-based activities
 class SomeActivity(object):
-    @decision_task(swf_domain='example', swf_workflow_type='TestWorkflow', swf_workflow_version='1.0',
+    @activity_task(swf_domain='example', swf_workflow_type='TestWorkflow', swf_workflow_version='1.0',
                swf_task_list='unit_test_c',
                input_data_store=SwfDataStore(), input_data_serializer=JsonSerializer(),
                result_data_store=SwfDataStore(), result_data_serializer=JsonSerializer())
