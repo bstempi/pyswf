@@ -1,6 +1,6 @@
 from dateutil.relativedelta import *
 
-from models import SwfDecisionContext
+from models import Marker as MarkerModel
 from serializers import JsonSerializer
 from pyswfaws.exceptions import ActivityTaskException
 
@@ -188,3 +188,35 @@ class Timer(Promise):
             return Timer.SwfTimer(seconds)
         else:
             return Timer.LocalTimer(seconds)
+
+
+class Marker(Promise):
+    """
+    Defines a Marker in SWF
+
+    This class gets Marker models from the SWF decision context for use in deciders
+    """
+
+    __slots__ = ['marker', 'decision_context', 'decision_context', 'is_remote_mode']
+
+    def __init__(self, name, details):
+        if not self.is_remote_mode:
+            self.marker = MarkerModel(name=name, details=details)
+        else:
+            # Get the next marker from the dc history
+            try:
+                self.marker = self.decision_context.user_markers_iter.next()
+            except StopIteration:
+                # No next marker?  This must be a new marker.
+                self.marker = MarkerModel(name=name, details=details)
+                self.decision_context.decisions.record_marker(marker_name=name, details=details)
+
+
+    @property
+    def is_ready(self):
+        # Markers don't take any time to make, so they're "always ready"
+        return True
+
+    @property
+    def result(self):
+        return self.marker

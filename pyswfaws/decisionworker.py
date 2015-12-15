@@ -16,7 +16,7 @@ from boto.swf.layer1_decisions import Layer1Decisions
 from models import *
 from serializers import *
 from datastores import *
-from promise import Timer as PTimer
+from promise import Timer as PTimer, Marker as PMarker
 
 
 class DistributedDecisionWorker:
@@ -59,6 +59,7 @@ class DistributedDecisionWorker:
 
         # More trickery -- make sure that timers know that we're in a remote mode
         PTimer.is_remote_mode = True
+        PMarker.is_remote_mode = True
 
         if hasattr(self._decision_function, 'swf_options'):
 
@@ -159,6 +160,9 @@ class DistributedDecisionWorker:
 
                 # Make sure that timers get them, too
                 PTimer.decision_context = decision_context
+                PMarker.decision_context = decision_context
+                # And markers
+
             except Exception as e:
                 self.logger.exception('Exception while parsing a workflow history')
                 message = str(e)
@@ -234,6 +238,7 @@ class DistributedDecisionWorker:
         child_workflows = OrderedDict()
         workflow = Workflow()
         cache_markers = list()
+        user_markers = list()
         id_count = 1
 
         workflow.run_id = decision_task['workflowExecution']['runId']
@@ -416,14 +421,17 @@ class DistributedDecisionWorker:
                 child_workflow.version = e['startChildWorkflowExecutionInitiatedEventAttributes']['workflowType']['version']
                 child_workflow.state = 'SCHEDULED'
 
-            # Cache markers
             elif et == 'MarkerRecorded':
                 marker_name = e['markerRecordedEventAttributes']['markerName']
+                marker_details = e['markerRecordedEventAttributes']['details']
+                marker = Marker(name=marker_name, details=marker_details)
 
+                # Cache markers
                 if marker_name == 'cache':
-                    details = e['markerRecordedEventAttributes']['details']
-                    marker = Marker(name=marker_name, details=details)
                     cache_markers.append(marker)
+                # User markers
+                else:
+                    user_markers.append(marker)
 
         swf_decision_context = SwfDecisionContext()
 
@@ -459,6 +467,9 @@ class DistributedDecisionWorker:
         swf_decision_context.swf_history = history
         swf_decision_context.cache_markers = cache_markers
         swf_decision_context.cache_markers_iter = iter(cache_markers)
+        swf_decision_context.user_markers = user_markers
+        swf_decision_context.user_markers_iter = iter(user_markers)
+
         swf_decision_context.workflow = workflow
         swf_decision_context._id_generator = id_count
 
@@ -486,6 +497,7 @@ class LocalDecisionWorker(object):
 
         # More trickery -- make sure that timers know that we're in a remote mode
         PTimer.is_remote_mode = False
+        PMarker.is_remote_mode = False
 
     def start(self, *args, **kwargs):
         # Do we have a 'self' to pass in?

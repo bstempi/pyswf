@@ -73,8 +73,8 @@ class SwfDecisionContext(object):
     """
 
     __slots__ = ['decision_task', 'swf_history', 'decisions', 'activities', 'activities_iter', 'child_workflows',
-                 'child_workflows_iter', 'cache_markers', 'cache_markers_iter', 'signals', 'signals_iter', 'timers',
-                 'timers_iter', 'workflow', '_id_generator']
+                 'child_workflows_iter', 'cache_markers', 'cache_markers_iter', 'user_markers',
+                 'user_markers_iter', 'signals', 'signals_iter', 'timers', 'timers_iter', 'workflow', '_id_generator']
 
     def __init__(self, **kwargs):
         for slot in self.__slots__:
