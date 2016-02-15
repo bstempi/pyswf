@@ -1,10 +1,8 @@
 from dateutil.relativedelta import *
 
 from models import Marker as MarkerModel
-from serializers import JsonSerializer
-from pyswfaws.exceptions import ActivityTaskException
+from pyswfaws.exceptions import ActivityTaskException, UnfulfilledPromiseException
 
-import thread
 import datetime
 import pytz
 import time
@@ -58,7 +56,7 @@ class DistributedActivityPromise(Promise):
         if self._activity.state in ('SCHEDULED', 'STARTED'):
             # If the task is still running
             self._logger.debug("Stopping execution due to promises not being fulfilled.")
-            thread.exit()
+            raise UnfulfilledPromiseException()
         if self._activity.state in self._failure_states:
             # We failed and we don't have retries or it's not a retryable failure
             raise self.exception
@@ -102,7 +100,7 @@ class DistributedChildWorkflowPromise(Promise):
         if self._cwf.state in ('SCHEDULED', 'STARTED'):
             # If the task is still running
             self._logger.debug("Stopping execution due to promises not being fulfilled.")
-            thread.exit()
+            raise UnfulfilledPromiseException()
         if self._cwf.state in self._failure_states:
             # We failed and we don't have retries or it's not a retryable failure
             raise self.exception
@@ -154,7 +152,7 @@ class Timer(Promise):
         def result(self):
             if self.is_ready is not True:
                 # The user wants to cash in on this promise, but it's not ready.  Bail.
-                thread.exit()
+                raise UnfulfilledPromiseException()
 
 
     class LocalTimer(Promise):

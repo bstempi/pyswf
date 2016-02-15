@@ -17,6 +17,7 @@ from models import *
 from serializers import *
 from datastores import *
 from promise import Timer as PTimer, Marker as PMarker
+from pyswfaws.exceptions import UnfulfilledPromiseException
 
 
 class DistributedDecisionWorker:
@@ -190,7 +191,7 @@ class DistributedDecisionWorker:
                 finished = False
                 result = self._decision_function(*args[0], **args[1])
                 finished = True
-            except SystemExit:
+            except UnfulfilledPromiseException:
                 finished = False
             except Exception as e:
                 self.logger.debug('Calling the exception handler')
