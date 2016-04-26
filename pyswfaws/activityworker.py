@@ -92,7 +92,7 @@ class DistributedActivityWorker(object):
         # Reset the decisions that we want to make; we can't schedule new activities and fail a workflow in the same
         # call
         self._swf.respond_activity_task_failed(activity_task['taskToken'], reason='Activity exception',
-                                               details=exception.message[:3000])
+                                               details=repr(exception)[:3000])
         return False
 
     def start(self):

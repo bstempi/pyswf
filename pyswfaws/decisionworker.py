@@ -109,7 +109,7 @@ class DistributedDecisionWorker:
         # Reset the decisions that we want to make; we can't schedule new activities and fail a workflow in the same
         # call
         decision_context.decisions = Layer1Decisions()
-        decision_context.decisions.fail_workflow_execution(reason='Decider exception', details=exception.message[:3000])
+        decision_context.decisions.fail_workflow_execution(reason='Decider exception', details=repr(exception)[:3000])
         return False
 
     def start(self):
